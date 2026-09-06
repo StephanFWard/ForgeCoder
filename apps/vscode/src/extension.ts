@@ -2,8 +2,10 @@
 import * as vscode from 'vscode';
 import { ForgeApi } from './client/api';
 import { HttpClient } from './client/httpClient';
+import { SidebarProvider } from './chat/SidebarProvider';
 import { ForgeCompletionProvider } from './completion/ForgeCompletionProvider';
 import { registerCommands } from './commands';
+import { registerCodeActions } from './commands/actions';
 
 let statusBar: vscode.StatusBarItem;
 
@@ -18,7 +20,18 @@ export function activate(context: vscode.ExtensionContext): void {
   statusBar.show();
   context.subscriptions.push(statusBar);
 
-  registerCommands(context, api);
+  // The chat sidebar (activity-bar view). retainContextWhenHidden keeps the
+  // conversation alive when the user switches tabs.
+  const sidebar = new SidebarProvider(context.extensionUri, api);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(SidebarProvider.viewId, sidebar, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+    sidebar,
+  );
+
+  registerCommands(context, api, sidebar);
+  registerCodeActions(context, api, sidebar);
   registerCompletion(context, api);
   registerWorkspaceIndexing(context, api);
 
@@ -66,6 +79,6 @@ async function refreshHealth(api: ForgeApi): Promise<void> {
     statusBar.tooltip = `Forge API ${health.version} — llama.cpp ${health.llama_server.ok ? 'ready' : 'offline'}`;
   } else {
     statusBar.text = '$(circle-slash) ForgeCoder offline';
-    statusBar.tooltip = 'Forge server not reachable at 127.0.0.1:8787 — run: python -m uvicorn forge_server.main:app --host 127.0.0.1 --port 8787';
+    statusBar.tooltip = 'Forge server not reachable at 127.0.0.1:8787 — run: python runtime/scripts/start_forge.py';
   }
 }

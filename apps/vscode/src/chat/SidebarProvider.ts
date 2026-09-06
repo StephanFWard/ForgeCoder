@@ -1,4 +1,10 @@
-/** Chat panel — a VS Code WebView that streams tokens from the Forge server. */
+/**
+ * Chat sidebar — the ForgeCoder activity-bar view ("do anything" chat).
+ *
+ * Implements vscode.WebviewViewProvider so ForgeCoder appears as a normal
+ * sidebar panel: an icon in the activity bar, a persistent chat view with
+ * streaming responses, and Apply Fix / View Diff patch actions.
+ */
 import * as vscode from 'vscode';
 import { ForgeApi, FilePatch, ChatTurn } from '../client/api';
 import { showPatchPreview } from '../ui/diff';
@@ -8,40 +14,39 @@ interface PendingPatch {
   patch: FilePatch;
 }
 
-export class ChatPanel {
-  private static instance: ChatPanel | undefined;
-  private readonly panel: vscode.WebviewPanel;
+export class SidebarProvider implements vscode.WebviewViewProvider {
+  public static readonly viewId = 'forgecoder.sidebar';
+
+  private view: vscode.WebviewView | undefined;
   private readonly disposables: vscode.Disposable[] = [];
   private pendingPatch: PendingPatch | undefined;
   private history: Array<{ role: string; content: string }> = [];
   private streaming = false;
 
-  static open(extensionUri: vscode.Uri, api: ForgeApi): ChatPanel {
-    if (ChatPanel.instance) {
-      ChatPanel.instance.panel.reveal(vscode.ViewColumn.Beside);
-      return ChatPanel.instance;
-    }
-    ChatPanel.instance = new ChatPanel(extensionUri, api);
-    return ChatPanel.instance;
-  }
-
-  private constructor(
+  constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly api: ForgeApi,
-  ) {
-    this.panel = vscode.window.createWebviewPanel(
-      'forgecoder.chat',
-      'ForgeCoder',
-      vscode.ViewColumn.Beside,
-      { enableScripts: true, retainContextWhenHidden: true },
-    );
-    this.panel.webview.html = this.renderHtml();
-    this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
-    this.panel.webview.onDidReceiveMessage(
-      (msg) => void this.onMessage(msg),
+  ) {}
+
+  resolveWebviewView(view: vscode.WebviewView): void {
+    this.view = view;
+    view.webview.options = { enableScripts: true, localResourceRoots: [this.extensionUri] };
+    view.webview.html = this.renderHtml();
+
+    view.onDidDispose(() => {
+      this.view = undefined;
+    }, null, this.disposables);
+
+    view.webview.onDidReceiveMessage(
+      (msg: Record<string, unknown>) => void this.onMessage(msg),
       null,
       this.disposables,
     );
+  }
+
+  /** Bring the sidebar to the front (used when a patch or message arrives). */
+  reveal(): void {
+    void this.view?.show?.(true);
   }
 
   private async onMessage(msg: Record<string, unknown>): Promise<void> {
@@ -100,7 +105,7 @@ export class ChatPanel {
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       this.post('error', {
-        message: `Cannot reach the Forge server. Start it with:\npython -m uvicorn forge_server.main:app --host 127.0.0.1 --port 8787\n\n(${detail})`,
+        message: `Cannot reach the Forge server. Start it with:\npython runtime\\scripts\\start_forge.py\n\n(${detail})`,
       });
       this.post('assistantDone', {});
     }
@@ -112,13 +117,17 @@ export class ChatPanel {
     this.history = this.history.slice(-12);
     this.streaming = false;
   }
-
-  /** Store a pending patch produced by a code action and surface it to the user. */
+  /** Store a pending patch produced by a code action and surface it in the sidebar. */
   offerPatch(workspace: string, patches: FilePatch[]): void {
     if (patches.length > 0) {
       this.pendingPatch = { workspace, patch: patches[0] };
+      this.reveal();
       this.post('pendingPatch', { path: patches[0].path });
     }
+  }
+
+  hasPendingPatch(): boolean {
+    return this.pendingPatch !== undefined;
   }
 
   private async previewPatches(): Promise<void> {
@@ -129,9 +138,21 @@ export class ChatPanel {
     await showPatchPreview(pending.workspace, pending.patch, this.api);
   }
 
+  /** Public entry so the "Apply Patch" command can reuse the sidebar flow. */
+  async applyPendingPatch(): Promise<void> {
+    await this.confirmApply();
+  }
+
+  /** Clear history and reset the webview DOM (title-bar broom icon). */
+  clearConversation(): void {
+    this.history = [];
+    this.post('cleared', {});
+  }
+
   private async confirmApply(): Promise<void> {
     const pending = this.pendingPatch;
     if (!pending) {
+      void vscode.window.showWarningMessage('No pending patch — ask ForgeCoder for a fix first.');
       return;
     }
     const allow = vscode.workspace.getConfiguration('forgecoder').get<boolean>('allowWriteFile', false);
@@ -156,39 +177,42 @@ export class ChatPanel {
   }
 
   private post(command: string, payload: Record<string, unknown>): void {
-    void this.panel.webview.postMessage({ command, ...payload });
+    void this.view?.webview.postMessage({ command, ...payload });
   }
 
   private renderHtml(): string {
-    const css = this.panel.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'chat.css'));
-    const js = this.panel.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'chat.js'));
+    const webview = this.view!.webview;
+    const css = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'chat.css'));
+    const js = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'chat.js'));
+    const nonce = Math.random().toString(36).slice(2);
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
 <link rel="stylesheet" href="${css}">
 <title>ForgeCoder</title>
 </head>
 <body>
-<header><span class="logo">◆</span> ForgeCoder <button id="clear" title="Clear conversation">⌫</button></header>
+<header><span class="logo">&#9670;</span> ForgeCoder <button id="clear" title="Clear conversation">&#9000;</button></header>
 <main id="messages"></main>
 <footer>
-  <input id="input" type="text" placeholder="Ask ForgeCoder..." autocomplete="off" spellcheck="false">
-  <button id="send" title="Send">➤</button>
+  <input id="input" type="text" placeholder="Ask ForgeCoder anything..." autocomplete="off" spellcheck="false">
+  <button id="send" title="Send">&#10148;</button>
   <div id="patchBar" class="hidden">
     <span id="patchInfo"></span>
     <button id="viewDiff">View Diff</button>
     <button id="apply">Apply Fix</button>
   </div>
 </footer>
-<script src="${js}"></script>
+<script nonce="${nonce}" src="${js}"></script>
 </body>
 </html>`;
   }
 
-  private dispose(): void {
-    ChatPanel.instance = undefined;
+  dispose(): void {
     this.disposables.forEach((d) => d.dispose());
   }
 }

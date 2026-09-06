@@ -88,9 +88,36 @@
         "command": "forgecoder.restartServer",
         "category": "ForgeCoder",
         "title": "Restart Server"
+      },
+      {
+        "command": "forgecoder.clearChat",
+        "category": "ForgeCoder",
+        "title": "Clear Chat",
+        "icon": "$(clear-all)"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "forgecoder",
+          "title": "ForgeCoder",
+          "icon": "media/forge.svg"
+        }
+      ]
+    },
+    "views": {
+      "forgecoder": [
+        {
+          "type": "webview",
+          "id": "forgecoder.sidebar",
+          "name": "Chat"
+        }
+      ]
+    },
     "menus": {
+      "view/title": [
+        { "command": "forgecoder.clearChat", "group": "navigation", "when": "view == forgecoder.sidebar" }
+      ],
       "editor/context": [
         { "command": "forgecoder.explain", "group": "forgecoder@1", "when": "editorHasSelection" },
         { "command": "forgecoder.fix", "group": "forgecoder@2", "when": "editorHasSelection" },

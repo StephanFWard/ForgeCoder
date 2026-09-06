@@ -1,27 +1,43 @@
 /** Command registration entry point. */
 import * as vscode from 'vscode';
 import { ForgeApi } from '../client/api';
-import { ChatPanel } from '../chat/ChatPanel';
+import { SidebarProvider } from '../chat/SidebarProvider';
 import { currentWorkspace } from '../context/selection';
 import { registerCodeActions } from './actions';
 
-export function registerCommands(context: vscode.ExtensionContext, api: ForgeApi): void {
-  let panel: ChatPanel | undefined;
-
-  const getPanel = (): ChatPanel | undefined => panel;
-
+export function registerCommands(
+  context: vscode.ExtensionContext,
+  api: ForgeApi,
+  sidebar: SidebarProvider,
+): void {
   context.subscriptions.push(
+    // "Chat" focuses the activity-bar sidebar (the primary chat surface).
     vscode.commands.registerCommand('forgecoder.chat', () => {
-      panel = ChatPanel.open(context.extensionUri, api);
+      sidebar.reveal();
+      void vscode.commands.executeCommand(SidebarProvider.viewId + '.focus');
       const workspace = currentWorkspace();
       if (workspace) {
         void api.index(workspace).catch(() => undefined);
       }
     }),
 
+    vscode.commands.registerCommand('forgecoder.clearChat', () => {
+      sidebar.reveal();
+      // Route through the webview so its DOM resets too.
+      sidebar.clearConversation();
+    }),
+
+    vscode.commands.registerCommand('forgecoder.applyPatch', async () => {
+      if (!sidebar.hasPendingPatch()) {
+        void vscode.window.showWarningMessage('No pending patch — ask ForgeCoder for a fix first.');
+        return;
+      }
+      await sidebar.applyPendingPatch();
+    }),
+
     vscode.commands.registerCommand('forgecoder.restartServer', async () => {
       const ok = await vscode.window.showInformationMessage(
-        'Restarting only re-checks the Forge server (127.0.0.1:8787). Start it with: python -m uvicorn forge_server.main:app --host 127.0.0.1 --port 8787',
+        'Restarting only re-checks the Forge server (127.0.0.1:8787). Start it with: python runtime/scripts/start_forge.py',
         { modal: true },
         'Check Now',
       );
@@ -34,5 +50,5 @@ export function registerCommands(context: vscode.ExtensionContext, api: ForgeApi
     }),
   );
 
-  registerCodeActions(context, api, getPanel);
+  registerCodeActions(context, api, sidebar);
 }

@@ -1,16 +1,14 @@
 /** Code-action implementations: explain / fix / refactor / tests / search / error. */
 import * as vscode from 'vscode';
 import { ForgeApi } from '../client/api';
-import { ChatPanel } from '../chat/ChatPanel';
+import { SidebarProvider } from '../chat/SidebarProvider';
 import { activeFileContext, currentWorkspace, diagnosticSummary } from '../context/selection';
 import { showMarkdown } from '../ui/markdown';
-
-export type ChatPanelSupplier = () => ChatPanel | undefined;
 
 export function registerCodeActions(
   context: vscode.ExtensionContext,
   api: ForgeApi,
-  getPanel: ChatPanelSupplier,
+  sidebar: SidebarProvider,
 ): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('forgecoder.explain', async () => {
@@ -42,9 +40,11 @@ export function registerCodeActions(
       if (result.diagnosis) {
         void vscode.window.showInformationMessage(result.diagnosis.split('\n')[0]);
       }
-      const panel = getPanel();
-      if (result.patches?.length && panel) {
-        panel.offerPatch(ctx.workspace ?? currentWorkspace() ?? '', result.patches);
+      const pending = result.patches?.length
+        ? result.patches
+        : undefined;
+      if (pending) {
+        sidebar.offerPatch(ctx.workspace ?? currentWorkspace() ?? '', pending);
       } else {
         showMarkdown('ForgeCoder: Fix', result.diagnosis ?? 'No structured patch was produced.');
       }
@@ -61,9 +61,8 @@ export function registerCodeActions(
         void vscode.window.showErrorMessage(String(result.error ?? 'Refactor failed'));
         return;
       }
-      const panel = getPanel();
-      if (result.patches?.length && panel) {
-        panel.offerPatch(ctx.workspace ?? currentWorkspace() ?? '', result.patches);
+      if (result.patches?.length) {
+        sidebar.offerPatch(ctx.workspace ?? currentWorkspace() ?? '', result.patches);
       } else {
         showMarkdown('ForgeCoder: Refactor', result.proposal ?? 'No structured patch was produced.');
       }
@@ -130,10 +129,11 @@ export function registerCodeActions(
     }),
 
     vscode.commands.registerCommand('forgecoder.applyPatch', async () => {
-      const panel = getPanel();
-      if (!panel) {
-        void vscode.window.showWarningMessage('No pending patch to apply.');
+      if (!sidebar.hasPendingPatch()) {
+        void vscode.window.showWarningMessage('No pending patch — ask ForgeCoder for a fix first.');
+        return;
       }
+      await sidebar.applyPendingPatch();
     }),
   );
 }

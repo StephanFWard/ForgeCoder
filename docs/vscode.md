@@ -2,9 +2,11 @@
 
 ## Features
 
-- **Chat panel** — WebView that streams tokens from the Forge server.
-  Right-click a selection to chat about it; buttons appear for `Apply Fix` /
-  `View Diff` when the server returns a structured patch.
+- **Chat sidebar** — the ForgeCoder icon in the activity bar opens a persistent
+  "do anything" chat view that streams tokens from the Forge server. Buttons
+  appear for `Apply Fix` / `View Diff` when the server returns a structured
+  patch; `ForgeCoder: Clear Chat` in the view title resets the conversation.
+  `ForgeCoder: Chat` (or right-click → chat about a selection) focuses it.
 - **Inline completion (autocomplete)** — separate, conservative pipeline.
   Uses Qwen FIM (`<|fim_prefix|>…<|fim_suffix|>…<|fim_middle|>`),
   40 lines of context before, 20 after, default `max_tokens 64`,
@@ -61,7 +63,7 @@ Press F5 in VS Code to launch an Extension Development Host.
 ## Architecture
 
 ```
-media/chat.js  ←→  src/chat/ChatPanel.ts  ←→  ForgeApi (client/api.ts)
+media/chat.js  ←→  src/chat/SidebarProvider.ts  ←→  ForgeApi (client/api.ts)
                                                   │
                         HttpClient (client/httpClient.ts)
                                                   │  SSE / JSON

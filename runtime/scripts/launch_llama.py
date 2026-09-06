@@ -79,7 +79,6 @@ def build_command(binary: str, model: str, profile: dict) -> list[str]:
         "-t", str(threads),
         "--host", DEFAULT_HOST,
         "--port", str(DEFAULT_PORT),
-        "--no-webui",
     ]
     if gpu_layers > 0:
         cmd += ["-ngl", str(gpu_layers)]
