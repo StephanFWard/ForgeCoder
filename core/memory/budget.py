@@ -7,7 +7,7 @@ Hard constraints (from the master plan):
 """
 from __future__ import annotations
 
-from core.memory.process import available_ram_gb, cpu_cores, gpu_vram_gb
+from core.memory.process import cpu_cores, gpu_vram_gb, total_ram_gb
 
 
 def context_budget_for_ram(ram_gb: float, *, max_context: int = 4096) -> int:
@@ -26,8 +26,12 @@ def completion_budget_for_ram(ram_gb: float, *, max_completion: int = 1024) -> i
 
 
 def hardware_profile() -> dict:
-    """Build the initial `%LOCALAPPDATA%/ForgeCoder/config.json` shape."""
-    ram = available_ram_gb()
+    """Build the initial `%LOCALAPPDATA%/ForgeCoder/config.json` shape.
+
+    Provisioning uses *total* RAM (a stable hardware property); momentary
+    *available* RAM is the memory monitor's job at runtime.
+    """
+    ram = total_ram_gb()
     cores = cpu_cores()
     vram = gpu_vram_gb()
     gpu_layers = 19 if vram >= 4 else 0  # ~all layers of a 1.5B on 4 GB VRAM

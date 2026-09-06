@@ -50,6 +50,8 @@ logs/
 Thumbs.db
 
 # ---------- Runtime binaries ----------
+runtime/llama/*
+!runtime/llama/README.md
 runtime/llama/llama-server*
 runtime/llama/llama-quantize*
 runtime/llama/convert-*.py

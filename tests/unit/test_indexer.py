@@ -65,6 +65,18 @@ def test_search_returns_empty_for_noise(tmp_path):
     index.close()
 
 
+def test_search_natural_language_fallback(tmp_path):
+    """Sentence queries must not fail just because every token must match."""
+    root = _write_tree(Path(tmp_path))
+    index = CodeIndex(Path(tmp_path) / "db.sqlite")
+    index.connect()
+    index.index_workspace(root, prune=False)
+    rows = index.search("What does greet return when the user name is given?")
+    assert rows, "OR fallback over distinctive terms should retrieve the method chunk"
+    assert rows[0]["path"] == "src/UserService.java"
+    index.close()
+
+
 def test_symbol_lookup(tmp_path):
     root = _write_tree(Path(tmp_path))
     index = CodeIndex(Path(tmp_path) / "db.sqlite")

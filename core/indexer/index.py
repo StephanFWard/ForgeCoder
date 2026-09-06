@@ -239,11 +239,26 @@ class CodeIndex:
 
     # ------------------------------------------------------------------ search
     def search(self, query: str, *, limit: int = 20, workspace: str | None = None) -> list[dict]:
-        """FTS5 search over chunk text/path/language; returns dict rows."""
+        """FTS5 search over chunk text/path/language; returns dict rows.
+
+        Two-phase: an AND of all tokens (precise) first; if nothing matches
+        (e.g. the query is a natural-language sentence), an OR over the
+        distinctive tokens, still ranked by bm25 so common words lose.
+        """
         tokens = self._fts_tokens(query)
         if not tokens:
             return []
-        match_expr = " AND ".join(f'"{t}"' for t in tokens)
+        rows = self._fts_query(" AND ", tokens, workspace, limit)
+        if not rows:
+            distinctive = [t for t in tokens if "_" in t or "-" in t or len(t) >= 5]
+            if not distinctive:
+                distinctive = sorted(tokens, key=len, reverse=True)[:4]
+            rows = self._fts_query(" OR ", distinctive, workspace, limit)
+        return rows
+
+    def _fts_query(self, joiner: str, tokens: list[str], workspace: str | None,
+                   limit: int) -> list[dict]:
+        match_expr = f" {joiner} ".join(f'"{t}"' for t in tokens)
         sql = (
             "SELECT c.id, c.path, c.language, c.content, c.start_line, c.end_line, "
             "       f.modified, f.size, bm25(chunks_fts) AS rank "
