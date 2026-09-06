@@ -1,0 +1,38 @@
+{
+  "dataset_version": "0.1.0",
+  "samples": 100000,
+  "languages": [
+    "Java",
+    "Python",
+    "JavaScript",
+    "TypeScript",
+    "SQL",
+    "Rust",
+    "C++",
+    "C#",
+    "Go"
+  ],
+  "behaviors": [
+    "chat",
+    "bugfix",
+    "editing",
+    "testing",
+    "completion",
+    "debugging",
+    "architecture",
+    "security"
+  ],
+  "record_formats": {
+    "ForgeChat": {"instruction": "...", "context": "...", "response": "..."},
+    "ForgeFix": {"instruction": "...", "code": "...", "error": "...", "response": "..."},
+    "ForgeEdit": {"instruction": "...", "code": "...", "response": "..."},
+    "ForgeTest": {"instruction": "...", "code": "...", "response": "..."},
+    "ForgeComplete": {"prefix": "...", "suffix": "...", "target": "..."}
+  },
+  "sources": [
+    "synthetic task generation",
+    "open-source bugfix pairs (apache-2.0/mit only)",
+    "curated editor selection transforms",
+    "issue -> patch extras"
+  ]
+}

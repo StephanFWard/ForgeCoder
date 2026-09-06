@@ -1,0 +1,19 @@
+{
+  "name": "forgecoder",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ForgeCoder — thin, local-first coding platform around a 1.5B coder model.",
+  "scripts": {
+    "setup": "python -m venv .venv && python -m pip install -e \".[dev]\"",
+    "server": "python -m uvicorn forge_server.main:app --host 127.0.0.1 --port 8787",
+    "test:py": "python -m pytest",
+    "test:vs": "cd apps/vscode && npm test",
+    "build:vs": "cd apps/vscode && npm run compile",
+    "package:vs": "cd apps/vscode && npm run package",
+    "install:vs": "cd apps/vscode && npm install",
+    "lint": "python -m ruff check apps/server core tests training/scripts"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

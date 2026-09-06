@@ -1,0 +1,82 @@
+# ForgeCoder — pyproject.toml
+#
+# The Python side of the project is split between two source trees:
+#   apps/server/forge_server   -> `forge_server` package (local Forge API)
+#   core/                      -> `core` package (indexing, retrieval, inference,
+#                                 patching, git, memory)
+# Both are installed by `pip install -e .` so they can import each other.
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forgecoder"
+version = "0.1.0"
+description = "A thin, local-first coding platform around a 1.5B coder model (Qwen2.5-Coder via llama.cpp)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "ForgeCoder Contributors" }]
+keywords = ["llm", "code", "llama.cpp", "local-first", "vscode", "qlora"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Code Generators",
+]
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "httpx>=0.27",
+    "pydantic>=2.0",
+    "psutil>=5.9",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+# Training extras are intentionally NOT part of the default install.
+# Training runs on a GPU host; the runtime only needs the weights.
+train = [
+    "torch>=2.2",
+    "transformers>=4.40",
+    "peft>=0.11",
+    "datasets>=2.18",
+    "accelerate>=0.29",
+    "bitsandbytes>=0.43",
+]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+forge-server = "forge_server.main:run"
+forge-index = "core.indexer.index:cli"
+
+[tool.setuptools.packages.find]
+where = ["apps/server", "core"]
+include = ["forge_server*", "core*"]
+namespaces = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "apps/server/tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = ["models", "training/lora", ".venv"]
+
+[tool.ruff.lint]
+# Explicit rule set: this repo's CI contract is F (pyflakes) + E4/E7/E9 +
+# W (pycodestyle) + I (isort) + UP (pyupgrade).
+select = ["E4", "E7", "E9", "F", "I", "UP", "W"]
+# B008: FastAPI's `Depends()` / `Header()` in argument defaults is the
+# framework's canonical dependency-injection idiom.
+ignore = ["B008"]

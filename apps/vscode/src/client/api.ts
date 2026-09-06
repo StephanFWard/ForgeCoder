@@ -1,0 +1,140 @@
+/** Typed wrappers around the Forge server endpoints. */
+import { HttpClient, SseEvent } from './httpClient';
+
+export interface SelectionInfo {
+  start: number;
+  end: number;
+}
+
+export interface ChatTurn {
+  message: string;
+  workspace?: string;
+  file?: string;
+  selection?: SelectionInfo;
+  history?: Array<{ role: string; content: string }>;
+}
+
+export interface ChatContextEvent extends SseEvent {
+  type: 'context';
+  total_tokens: number;
+  sections: string[];
+}
+export interface ChatDeltaEvent extends SseEvent {
+  type: 'delta';
+  content: string;
+}
+export interface ChatDoneEvent extends SseEvent {
+  type: 'done';
+}
+export interface ChatErrorEvent extends SseEvent {
+  type: 'error';
+  message: string;
+}
+
+export interface CompletionRequest {
+  language: string;
+  file: string;
+  prefix: string;
+  suffix: string;
+  context?: string[];
+  max_tokens?: number;
+}
+
+export interface PatchOperation {
+  type: 'insert' | 'replace' | 'delete';
+  start_line: number;
+  end_line?: number;
+  content: string;
+}
+
+export interface FilePatch {
+  path: string;
+  operations: PatchOperation[];
+}
+
+export interface PatchPreviewResponse {
+  ok: boolean;
+  error?: string;
+  path?: string;
+  diff?: string;
+  original?: string;
+  proposed?: string;
+  changed?: boolean;
+}
+
+export interface SearchResult {
+  path: string;
+  language: string;
+  content: string;
+  start_line: number;
+  end_line: number;
+}
+
+export interface HealthResponse {
+  status: string;
+  version: string;
+  llama_server: { ok: boolean; url: string };
+  database: { ok: boolean; path: string; files: number; chunks: number; symbols: number };
+}
+
+export class ForgeApi {
+  constructor(private readonly client: HttpClient) {}
+
+  health(signal?: AbortSignal): Promise<HealthResponse> {
+    return this.client.json<HealthResponse>('/health', undefined, signal);
+  }
+
+  chat(turn: ChatTurn): Promise<Response> {
+    return this.client.fetch('/v1/chat', turn);
+  }
+
+  async chatStream(turn: ChatTurn, onEvent: (ev: SseEvent) => void, signal?: AbortSignal): Promise<void> {
+    await this.client.stream('/v1/chat', turn, onEvent, signal);
+  }
+
+  completion(req: CompletionRequest, signal?: AbortSignal): Promise<{ completion: string; error?: string }> {
+    return this.client.json('/v1/completion', req, signal);
+  }
+
+  search(query: string, workspace?: string, limit = 10): Promise<{ ok: boolean; results: SearchResult[] }> {
+    return this.client.json('/v1/search', { query, workspace, limit });
+  }
+
+  index(workspace: string): Promise<{ ok: boolean; error?: string; added?: number }> {
+    return this.client.json('/v1/index', { workspace });
+  }
+
+  patchPreview(workspace: string, patch: FilePatch): Promise<PatchPreviewResponse> {
+    return this.client.json('/v1/patch/preview', { workspace, patch });
+  }
+
+  patchApply(workspace: string, patch: FilePatch, confirmed: boolean): Promise<{ ok: boolean; error?: string; applied?: boolean }> {
+    if (!confirmed) {
+      return Promise.resolve({ ok: false, error: 'Confirmation required before applying a file write.' });
+    }
+    return this.client.json(
+      '/v1/patch/apply',
+      { workspace, patch },
+      undefined,
+      { 'X-Forge-Confirm': 'true' },
+    );
+  }
+
+  fix(code: string, errorText: string, workspace?: string, file?: string):
+    Promise<{ ok: boolean; error?: string; diagnosis?: string; summary?: string; patches?: FilePatch[] }> {
+    return this.client.json('/v1/fix', { code, error: errorText, workspace, file });
+  }
+
+  edit(code: string, instruction?: string, workspace?: string, file?: string):
+    Promise<{ ok: boolean; error?: string; summary?: string; patches?: FilePatch[]; proposal?: string }> {
+    return this.client.json('/v1/edit', { code, instruction, workspace, file });
+  }
+
+  explain(code: string, workspace?: string, file?: string): Promise<{ ok: boolean; error?: string; explanation?: string }> {
+    return this.client.json('/v1/explain', { code, workspace, file });
+  }
+
+  tests(code: string, workspace?: string, file?: string): Promise<{ ok: boolean; error?: string; tests?: string }> {
+    return this.client.json('/v1/tests', { code, workspace, file });
+  }
+}

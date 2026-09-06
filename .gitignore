@@ -1,0 +1,55 @@
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+*.whl
+
+# ---------- Virtual envs ----------
+.venv/
+venv/
+env/
+
+# ---------- Node / VS Code ----------
+node_modules/
+out/
+*.vsix
+.vscode-test/
+.vscode/*.log
+
+# ---------- ForgeCoder data (never commit local state) ----------
+%LOCALAPPDATA%/ForgeCoder/
+models/base/**
+models/adapters/**
+models/merged/**
+models/gguf/**
+!models/base/.gitkeep
+!models/adapters/.gitkeep
+!models/merged/.gitkeep
+!models/gguf/.gitkeep
+
+# ---------- Training artifacts ----------
+training/lora/checkpoints/
+training/datasets/_generated/
+wandb/
+
+# ---------- Local databases, logs, config ----------
+*.db
+*.db-wal
+*.db-shm
+*.log
+logs/
+
+# ---------- Editor / OS ----------
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---------- Runtime binaries ----------
+runtime/llama/llama-server*
+runtime/llama/llama-quantize*
+runtime/llama/convert-*.py

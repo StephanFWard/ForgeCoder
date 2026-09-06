@@ -1,0 +1,165 @@
+{
+  "name": "forgecoder",
+  "displayName": "ForgeCoder",
+  "description": "Local-first AI coding assistant powered by ForgeCoder 1.5B (llama.cpp) with repository search and patch previews.",
+  "version": "0.1.0",
+  "publisher": "forgecoder",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "llm",
+    "local",
+    "llama.cpp",
+    "offline",
+    "autocomplete",
+    "chat"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:forgecoder.chat",
+    "onCommand:forgecoder.explain",
+    "onCommand:forgecoder.fix",
+    "onCommand:forgecoder.generateTests",
+    "onCommand:forgecoder.refactor",
+    "onCommand:forgecoder.search",
+    "onCommand:forgecoder.explainError",
+    "onCommand:forgecoder.applyPatch",
+    "onCommand:forgecoder.restartServer",
+    "onLanguage:typescript",
+    "onLanguage:javascript",
+    "onLanguage:python",
+    "onLanguage:java",
+    "onLanguage:go",
+    "onLanguage:rust",
+    "onLanguage:csharp",
+    "onLanguage:cpp",
+    "onLanguage:sql"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "forgecoder.chat",
+        "category": "ForgeCoder",
+        "title": "Chat"
+      },
+      {
+        "command": "forgecoder.explain",
+        "category": "ForgeCoder",
+        "title": "Explain Selection"
+      },
+      {
+        "command": "forgecoder.fix",
+        "category": "ForgeCoder",
+        "title": "Fix Selection"
+      },
+      {
+        "command": "forgecoder.generateTests",
+        "category": "ForgeCoder",
+        "title": "Generate Tests"
+      },
+      {
+        "command": "forgecoder.refactor",
+        "category": "ForgeCoder",
+        "title": "Refactor Selection"
+      },
+      {
+        "command": "forgecoder.search",
+        "category": "ForgeCoder",
+        "title": "Search Workspace"
+      },
+      {
+        "command": "forgecoder.explainError",
+        "category": "ForgeCoder",
+        "title": "Explain Error"
+      },
+      {
+        "command": "forgecoder.applyPatch",
+        "category": "ForgeCoder",
+        "title": "Apply Patch"
+      },
+      {
+        "command": "forgecoder.restartServer",
+        "category": "ForgeCoder",
+        "title": "Restart Server"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        { "command": "forgecoder.explain", "group": "forgecoder@1", "when": "editorHasSelection" },
+        { "command": "forgecoder.fix", "group": "forgecoder@2", "when": "editorHasSelection" },
+        { "command": "forgecoder.refactor", "group": "forgecoder@3", "when": "editorHasSelection" },
+        { "command": "forgecoder.generateTests", "group": "forgecoder@4", "when": "editorHasSelection" }
+      ]
+    },
+    "configuration": {
+      "title": "ForgeCoder",
+      "properties": {
+        "forgecoder.serverUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8787",
+          "description": "Forge server base URL (must remain loopback-local by default)."
+        },
+        "forgecoder.enableAutocomplete": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable inline (fill-in-the-middle) completions."
+        },
+        "forgecoder.autocompleteDelayMs": {
+          "type": "number",
+          "default": 400,
+          "description": "Debounce delay before requesting a completion."
+        },
+        "forgecoder.autocompleteMaxTokens": {
+          "type": "number",
+          "default": 64,
+          "minimum": 8,
+          "maximum": 256,
+          "description": "Maximum completion length (keep small: fast & conservative)."
+        },
+        "forgecoder.contextTokens": {
+          "type": "number",
+          "default": 4096,
+          "minimum": 1024,
+          "maximum": 8192,
+          "description": "Chat context budget in tokens."
+        },
+        "forgecoder.allowWriteFile": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow ForgeCoder to write files after showing a diff preview. Off = confirm every write."
+        },
+        "forgecoder.autoIndexOnOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Index the workspace when a folder is opened."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "npm run compile:src && npm run compile:test",
+    "compile:src": "tsc -p ./",
+    "compile:test": "tsc -p tsconfig.test.json",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package --no-dependencies",
+    "test": "npm run compile && node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.6",
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/test-electron": "^2.3.9",
+    "@vscode/vsce": "^2.26.0",
+    "glob": "^10.4.1",
+    "mocha": "^10.4.0",
+    "typescript": "^5.4.5"
+  }
+}
