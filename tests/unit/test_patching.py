@@ -28,6 +28,17 @@ def test_extract_json_from_code_fence():
     assert extract_json(text) == {"summary": "x", "files": []}
 
 
+def test_operation_to_dict():
+    """Regression: patches.py serialized operations via o.to_dict()."""
+    op = Operation(type="replace", start_line=42, end_line=47, content="x = 1\n")
+    assert op.to_dict() == {
+        "type": "replace",
+        "start_line": 42,
+        "end_line": 47,
+        "content": "x = 1\n",
+    }
+
+
 def test_extract_json_embedded_in_text():
     text = "Sure! Here's the patch:\n{\"summary\": \"y\", \"files\": []}\n\nHope that helps."
     assert extract_json(text)["summary"] == "y"

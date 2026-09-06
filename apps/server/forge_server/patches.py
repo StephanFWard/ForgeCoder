@@ -45,7 +45,7 @@ async def preview(req: PatchPreviewRequest, state: AppState = Depends(get_state)
         "original": result.original,
         "proposed": result.proposed,
         "changed": result.changed,
-        "operations": [o.to_dict() if hasattr(o, "to_dict") else o for o in req.patch.operations],
+        "operations": [o.to_dict() for o in req.patch.operations],
     }
 
 
@@ -74,5 +74,5 @@ async def from_model(body: dict, state: AppState = Depends(get_state)) -> dict:
         return {"ok": False, "error": str(exc)}
     return {
         "ok": True,
-        "patches": [{"path": p.path, "operations": [o.__dict__ for o in p.operations]} for p in patches],
+        "patches": [p.to_dict() for p in patches],
     }

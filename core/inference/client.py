@@ -54,11 +54,14 @@ class InferenceClient:
     # ------------------------------------------------------------- chat
     async def chat(self, messages: list[dict], *, temperature: float = 0.2,
                    max_tokens: int = 1024, stop: list[str] | None = None,
-                   stream: bool = False) -> str:
+                   stream: bool = False,
+                   presence_penalty: float = 0.0, frequency_penalty: float = 0.0) -> str:
         if stream:
             text = ""
             async for delta in self.chat_stream(messages, temperature=temperature,
-                                                max_tokens=max_tokens, stop=stop):
+                                                max_tokens=max_tokens, stop=stop,
+                                                presence_penalty=presence_penalty,
+                                                frequency_penalty=frequency_penalty):
                 text += delta
             return text
         payload: dict = {
@@ -66,6 +69,8 @@ class InferenceClient:
             "temperature": temperature,
             "max_tokens": min(max_tokens, 4096),
             "stream": False,
+            "presence_penalty": presence_penalty,
+            "frequency_penalty": frequency_penalty,
         }
         if stop:
             payload["stop"] = stop
@@ -81,7 +86,9 @@ class InferenceClient:
             raise InferenceError(f"Unexpected llama.cpp response: {data!r}") from exc
 
     async def chat_stream(self, messages: list[dict], *, temperature: float = 0.2,
-                          max_tokens: int = 1024, stop: list[str] | None = None) -> AsyncIterator[str]:
+                          max_tokens: int = 1024, stop: list[str] | None = None,
+                          presence_penalty: float = 0.0,
+                          frequency_penalty: float = 0.0) -> AsyncIterator[str]:
         from core.inference.streaming import iter_chat_deltas
 
         payload: dict = {
@@ -89,6 +96,8 @@ class InferenceClient:
             "temperature": temperature,
             "max_tokens": min(max_tokens, 4096),
             "stream": True,
+            "presence_penalty": presence_penalty,
+            "frequency_penalty": frequency_penalty,
         }
         if stop:
             payload["stop"] = stop

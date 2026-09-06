@@ -70,19 +70,10 @@ class ContextBuilder:
         sections: list[dict] = []
         used = estimate_tokens(system) + estimate_tokens(message)
 
-        # 1. Retrieved repository context
+        # 1. Retrieved repository context — batch-append chunks until the
+        #    budget is filled instead of stopping at a fixed count.
         if self.search_engine and message.strip():
-            results = self.search_engine.search(message, workspace=workspace, limit=6)
-            pool = [
-                {
-                    "content": r.content,
-                    "path": r.path,
-                    "start_line": r.start_line,
-                    "end_line": r.end_line,
-                    "modified": r.modified,
-                }
-                for r in results
-            ]
+            pool = self._retrieve(message, workspace=workspace)
             fitted = fit_to_budget(pool, budget - used - 400, min_chunks=1)
             if fitted:
                 text = _render_sections(fitted)
@@ -99,6 +90,35 @@ class ContextBuilder:
                 used += estimate_tokens(text)
 
         return BuiltContext(system=system, request=message, sections=sections, total_tokens=used)
+
+    def _retrieve(self, message: str, *, workspace: str | None = None,
+                  max_chunks: int = 24, max_chunk_tokens: int = 400) -> list[dict]:
+        """Gather a deduplicated candidate pool for the context window.
+
+        SearchEngine already ranks candidates; we cap each chunk's size so one
+        large file cannot monopolise the window, drop duplicates (same line
+        range or same content), and return everything — ``fit_to_budget`` then
+        appends as many as the remaining token budget allows.
+        """
+        results = self.search_engine.search(message, workspace=workspace, limit=max_chunks)
+        pool: list[dict] = []
+        seen_ranges: set[tuple[str, int, int]] = set()
+        seen_content: set[str] = set()
+        for r in results:
+            range_key = (r.path, r.start_line, r.end_line)
+            content_key = r.content.strip()
+            if range_key in seen_ranges or content_key in seen_content:
+                continue
+            seen_ranges.add(range_key)
+            seen_content.add(content_key)
+            pool.append({
+                "content": truncate_to_tokens(r.content, max_chunk_tokens),
+                "path": r.path,
+                "start_line": r.start_line,
+                "end_line": r.end_line,
+                "modified": r.modified,
+            })
+        return pool
 
 
 def _selection_snippet(path: Path, selection: tuple[int, int] | None) -> str:

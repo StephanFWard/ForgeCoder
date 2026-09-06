@@ -75,6 +75,15 @@ main {
   border-left: 3px solid currentColor;
 }
 
+.message.system {
+  align-self: center;
+  font-style: italic;
+  opacity: 0.8;
+  background: transparent;
+  border: none;
+  font-size: 0.9em;
+}
+
 .cursor {
   display: inline-block;
   width: 7px;

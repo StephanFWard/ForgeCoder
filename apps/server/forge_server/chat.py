@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from datetime import datetime
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -32,26 +33,38 @@ async def chat(req: ContextRequest, state: AppState = Depends(get_state)) -> Str
         budget=state.config.max_chat_context,
     )
 
-    # History is fitted into the remaining chat budget.
+    # History is fitted into the remaining chat budget. Each past message is
+    # capped so one long answer (e.g. a large diff) cannot anchor the model,
+    # and exact duplicates are dropped.
     history_budget = max(200, state.config.max_chat_context - max(built.total_tokens, 0) - 500)
-    history = []
-    for m in req.history[-6:]:
-        cost = estimate_tokens(m.get("content", ""))
+    history: list[dict] = []
+    seen_history: set[str] = set()
+    for m in req.history[-8:]:
+        content = truncate_to_tokens(str(m.get("content", "")), 350)
+        role = "assistant" if m.get("role") == "assistant" else "user"
+        key = role + ":" + content
+        if not content or key in seen_history:
+            continue
+        cost = estimate_tokens(content)
         if cost > history_budget:
             break
-        history.append({"role": "assistant" if m.get("role") == "assistant" else "user",
-                        "content": m.get("content", "")})
+        history.append({"role": role, "content": content})
+        seen_history.add(key)
         history_budget -= cost
 
     request_text = _build_user_turn(built)
-    messages = build_chat_messages(built.system, request_text, history)
+    # Local models have no clock; without this they answer date questions
+    # with their training cutoff.
+    system = built.system + f"\n\nToday's date: {datetime.now():%Y-%m-%d (%A)}."
+    messages = build_chat_messages(system, request_text, history)
 
     async def event_stream() -> AsyncIterator[str]:
         yield _sse({"type": "context", "total_tokens": built.total_tokens,
                     "sections": [s["type"] for s in built.sections]})
         try:
             async for delta in state.inference.chat_stream(
-                messages, temperature=0.2, max_tokens=1024
+                messages, temperature=0.3, max_tokens=1024,
+                presence_penalty=0.2, frequency_penalty=0.2,
             ):
                 yield _sse({"type": "delta", "content": delta})
         except Exception as exc:  # surface llama.cpp failures to the UI

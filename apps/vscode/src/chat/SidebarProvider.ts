@@ -112,6 +112,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     this.history.push({ role: 'user', content: message });
     if (full) {
+      // Repetition guard: 1.5B models sometimes anchor on the previous turn.
+      const previousAssistant = [...this.history].reverse().find((m) => m.role === 'assistant');
+      if (previousAssistant && full.trim() === previousAssistant.content.trim()) {
+        this.post('notice', {
+          message: 'The model repeated its previous answer. Use Clear Chat or rephrase with more detail.',
+        });
+      }
       this.history.push({ role: 'assistant', content: full });
     }
     this.history = this.history.slice(-12);

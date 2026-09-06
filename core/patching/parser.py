@@ -33,6 +33,14 @@ class Operation:
     end_line: int | None = None
     content: str = ""
 
+    def to_dict(self) -> dict:
+        return {
+            "type": self.type,
+            "start_line": self.start_line,
+            "end_line": self.end_line,
+            "content": self.content,
+        }
+
 
 @dataclass(frozen=True)
 class FilePatch:

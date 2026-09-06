@@ -61,6 +61,9 @@
       case 'error':
         addMessage('error', msg.message);
         break;
+      case 'notice':
+        addMessage('system', msg.message);
+        break;
       case 'pendingPatch':
         patchInfo.textContent = 'Patch ready for ' + msg.path;
         patchBar.classList.remove('hidden');
