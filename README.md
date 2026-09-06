@@ -1,5 +1,7 @@
 # ForgeCoder
 
+<img width="492" height="967" alt="image" src="https://github.com/user-attachments/assets/e86fed06-1e1a-46b0-8d8a-f76be86b7cbd" />
+
 A **thin, local-first coding platform** wrapped around a 1.5B coder model.
 ForgeCoder does not try to put repository intelligence into the model — it
 keeps a 1.5B parameter Qwen2.5-Coder running through **llama.cpp** on your
