@@ -190,3 +190,26 @@ Parses raw model output into a validated `FilePatch` structure: body
 
 Environment overrides: `FORGECODER_<UPPERCASE_FIELD_NAME>` (e.g.
 `FORGECODER_PORT`, `FORGECODER_LLAMA_URL`).
+## Git endpoints (v0.2)
+
+| Endpoint             | Confirm header | Purpose                                        |
+| -------------------- | -------------- | ---------------------------------------------- |
+| `POST /v1/git/status`   | -           | Branch, remote, changed files, recent commits  |
+| `POST /v1/git/diff`     | -           | Staged + unstaged unified diff                 |
+| `POST /v1/git/changes`  | -           | **View Changes**: diff reviewed by the model   |
+| `POST /v1/git/commit`   | required    | Stage (`add_all`) and commit with a message    |
+| `POST /v1/git/push`     | required    | Push current branch to origin                  |
+| `POST /v1/git/pull`     | required    | Pull origin into the current branch            |
+
+## Plan -> Act events (v0.2)
+
+| Endpoint          | Confirm header | Purpose                                                     |
+| ----------------- | -------------- | ----------------------------------------------------------- |
+| `POST /v1/plan`   | -              | Turn a request into `{summary, steps[]}` (search/explain/edit/test/commit) |
+| `POST /v1/act`    | for test/commit | Execute exactly one step; result feeds the next; edit steps return a patch |
+
+## Other (v0.2)
+
+| Endpoint        | Purpose                                        |
+| --------------- | ---------------------------------------------- |
+| `POST /v1/ask`  | Non-streaming chat (MCP + simple clients)      |

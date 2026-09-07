@@ -27,6 +27,11 @@ export function registerCommands(
       sidebar.clearConversation();
     }),
 
+    vscode.commands.registerCommand('forgecoder.reviewChanges', () => sidebar.startReview()),
+    vscode.commands.registerCommand('forgecoder.commitWithForge', () => sidebar.startCommit()),
+    vscode.commands.registerCommand('forgecoder.pushWithForge', () => sidebar.startPush()),
+    vscode.commands.registerCommand('forgecoder.planMode', () => sidebar.enablePlanMode()),
+
     vscode.commands.registerCommand('forgecoder.applyPatch', async () => {
       if (!sidebar.hasPendingPatch()) {
         void vscode.window.showWarningMessage('No pending patch — ask ForgeCoder for a fix first.');

@@ -94,6 +94,30 @@
         "category": "ForgeCoder",
         "title": "Clear Chat",
         "icon": "$(clear-all)"
+      },
+      {
+        "command": "forgecoder.reviewChanges",
+        "category": "ForgeCoder",
+        "title": "Review Working Changes",
+        "icon": "$(git-compare)"
+      },
+      {
+        "command": "forgecoder.commitWithForge",
+        "category": "ForgeCoder",
+        "title": "Commit All Changes",
+        "icon": "$(git-commit)"
+      },
+      {
+        "command": "forgecoder.pushWithForge",
+        "category": "ForgeCoder",
+        "title": "Push to Origin",
+        "icon": "$(repo-push)"
+      },
+      {
+        "command": "forgecoder.planMode",
+        "category": "ForgeCoder",
+        "title": "Plan && Act Mode",
+        "icon": "$(checklist)"
       }
     ],
     "viewsContainers": {
@@ -116,7 +140,11 @@
     },
     "menus": {
       "view/title": [
-        { "command": "forgecoder.clearChat", "group": "navigation", "when": "view == forgecoder.sidebar" }
+        { "command": "forgecoder.reviewChanges", "group": "navigation@1", "when": "view == forgecoder.sidebar" },
+        { "command": "forgecoder.commitWithForge", "group": "navigation@2", "when": "view == forgecoder.sidebar" },
+        { "command": "forgecoder.pushWithForge", "group": "navigation@3", "when": "view == forgecoder.sidebar" },
+        { "command": "forgecoder.planMode", "group": "navigation@4", "when": "view == forgecoder.sidebar" },
+        { "command": "forgecoder.clearChat", "group": "navigation@5", "when": "view == forgecoder.sidebar" }
       ],
       "editor/context": [
         { "command": "forgecoder.explain", "group": "forgecoder@1", "when": "editorHasSelection" },

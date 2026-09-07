@@ -5,7 +5,7 @@ from pathlib import Path
 
 # Explicit permission set. v0.1 auto-allows the read-only tier and defers the
 # rest to the caller (VS Code shows a confirmation dialog).
-PERMISSIONS = {"READ_FILE", "SEARCH", "GIT_READ", "WRITE_FILE", "BUILD", "TEST", "SHELL"}
+PERMISSIONS = {"READ_FILE", "SEARCH", "GIT_READ", "GIT_WRITE", "WRITE_FILE", "BUILD", "TEST", "SHELL"}
 PERMISSIONS_AUTO = {"READ_FILE", "SEARCH", "GIT_READ"}
 PERMISSIONS_CONFIRM = sorted(PERMISSIONS - PERMISSIONS_AUTO)
 

@@ -70,6 +70,59 @@ export interface SearchResult {
   end_line: number;
 }
 
+export interface GitChangeEntry {
+  path: string;
+  staged: string;
+  worktree: string;
+  summary: string;
+}
+
+export interface GitStatusResponse {
+  ok: boolean;
+  error?: string;
+  branch?: string | null;
+  remote?: string | null;
+  entries?: GitChangeEntry[];
+  counts?: { total: number; staged: number; worktree: number; untracked: number };
+  recent?: Array<{ hash: string; author: string; subject: string }>;
+}
+
+export interface GitChangesResponse {
+  ok: boolean;
+  error?: string;
+  clean?: boolean;
+  branch?: string | null;
+  entries?: GitChangeEntry[];
+  review?: string;
+  diff?: string;
+}
+
+export interface PlanStep {
+  title: string;
+  action: 'search' | 'explain' | 'edit' | 'test' | 'commit';
+  detail: string;
+}
+
+export interface PlanResponse {
+  ok: boolean;
+  error?: string;
+  plan_id: string;
+  summary: string;
+  steps: PlanStep[];
+  fallback?: boolean;
+}
+
+export interface ActResponse {
+  ok: boolean;
+  error?: string;
+  step_index: number;
+  action: string;
+  title: string;
+  output: string;
+  patch?: FilePatch;
+  next_index?: number | null;
+}
+
 export interface HealthResponse {
   status: string;
   version: string;
@@ -136,5 +189,51 @@ export class ForgeApi {
 
   tests(code: string, workspace?: string, file?: string): Promise<{ ok: boolean; error?: string; tests?: string }> {
     return this.client.json('/v1/tests', { code, workspace, file });
+  }
+
+  // ------------------------------------------------------------- git powers
+  gitStatus(workspace: string): Promise<GitStatusResponse> {
+    return this.client.json('/v1/git/status', { workspace });
+  }
+
+  gitChanges(workspace: string): Promise<GitChangesResponse> {
+    return this.client.json('/v1/git/changes', { workspace }, undefined, undefined);
+  }
+
+  gitCommit(workspace: string, message: string, confirmed: boolean): Promise<{ ok: boolean; error?: string; hash?: string; subject?: string; staged?: number }> {
+    if (!confirmed) {
+      return Promise.resolve({ ok: false, error: 'Confirmation required before a commit.' });
+    }
+    return this.client.json(
+      '/v1/git/commit',
+      { workspace, message, add_all: true },
+      undefined,
+      { 'X-Forge-Confirm': 'true' },
+    );
+  }
+
+  gitPush(workspace: string, confirmed: boolean): Promise<{ ok: boolean; error?: string; remote?: string; branch?: string }> {
+    if (!confirmed) {
+      return Promise.resolve({ ok: false, error: 'Confirmation required before a push.' });
+    }
+    return this.client.json('/v1/git/push', { workspace }, undefined, { 'X-Forge-Confirm': 'true' });
+  }
+
+  // ------------------------------------------------------------ plan -> act
+  plan(message: string, workspace?: string): Promise<PlanResponse> {
+    return this.client.json('/v1/plan', { message, workspace }, undefined, undefined);
+  }
+
+  act(planId: string, index: number, workspace?: string, confirm = false): Promise<ActResponse> {
+    return this.client.json(
+      '/v1/act',
+      { plan_id: planId, index, workspace },
+      undefined,
+      confirm ? { 'X-Forge-Confirm': 'true' } : undefined,
+    );
+  }
+
+  ask(message: string, workspace?: string): Promise<{ ok: boolean; answer?: string; error?: string }> {
+    return this.client.json('/v1/ask', { message, workspace }, undefined, undefined);
   }
 }

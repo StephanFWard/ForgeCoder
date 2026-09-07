@@ -6,8 +6,9 @@
  * streaming responses, and Apply Fix / View Diff patch actions.
  */
 import * as vscode from 'vscode';
-import { ForgeApi, FilePatch, ChatTurn } from '../client/api';
+import { ForgeApi, FilePatch, ChatTurn, ActResponse, GitChangesResponse, PlanResponse } from '../client/api';
 import { showPatchPreview } from '../ui/diff';
+import { currentWorkspace } from '../context/selection';
 
 interface PendingPatch {
   workspace: string;
@@ -64,6 +65,141 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this.history = [];
         this.post('cleared', {});
         break;
+
+      // ---- git powers ----
+      case 'reviewChanges':
+        await this.reviewChanges();
+        break;
+      case 'commit':
+        await this.commitWithForge();
+        break;
+      case 'push':
+        await this.pushToOrigin();
+        break;
+
+      // ---- plan -> act events ----
+      case 'plan':
+        await this.makePlan(String(msg.message ?? ''));
+        break;
+      case 'act':
+        await this.runStep(String(msg.planId ?? ''), Number(msg.index ?? -1),
+                           msg.action === 'test' || msg.action === 'commit');
+        break;
+    }
+  }
+
+  private async reviewChanges(): Promise<void> {
+    const workspace = currentWorkspace();
+    if (!workspace) {
+      this.post('error', { message: 'Open a workspace folder first.' });
+      return;
+    }
+    this.reveal();
+    this.post('assistantStart', {});
+    this.post('delta', { content: 'Reviewing working changes…' });
+    const res = await this.api.gitChanges(workspace).catch((err) => ({
+      ok: false, error: err instanceof Error ? err.message : String(err),
+    } as GitChangesResponse));
+    this.post('assistantDone', {});
+    if (!res.ok) {
+      this.post('error', { message: res.error ?? 'Review failed' });
+      return;
+    }
+    this.post('changesReview', {
+      branch: res.branch,
+      clean: res.clean,
+      count: res.entries?.length ?? 0,
+      review: res.review,
+      diff: res.diff,
+    });
+  }
+
+  private async commitWithForge(): Promise<void> {
+    const workspace = currentWorkspace();
+    if (!workspace) {
+      void vscode.window.showWarningMessage('Open a workspace folder first.');
+      return;
+    }
+    const message = await vscode.window.showInputBox({
+      prompt: 'Commit message',
+      placeHolder: 'ForgeCoder: describe the change',
+      ignoreFocusOut: true,
+    });
+    if (!message) {
+      return;
+    }
+    const res = await this.api.gitCommit(workspace, message, true);
+    if (!res.ok) {
+      void vscode.window.showErrorMessage(`Commit failed: ${res.error}`);
+      this.post('error', { message: `Commit failed: ${res.error}` });
+      return;
+    }
+    void vscode.window.showInformationMessage(`Committed ${res.hash}: ${res.subject}`);
+    this.post('notice', { message: `Committed ${res.hash}: ${res.subject} (${res.staged} files)` });
+  }
+
+  private async pushToOrigin(): Promise<void> {
+    const workspace = currentWorkspace();
+    if (!workspace) {
+      void vscode.window.showWarningMessage('Open a workspace folder first.');
+      return;
+    }
+    const answer = await vscode.window.showWarningMessage(
+      'Push the current branch to origin?', { modal: true }, 'Push',
+    );
+    if (answer !== 'Push') {
+      return;
+    }
+    const res = await this.api.gitPush(workspace, true);
+    if (!res.ok) {
+      void vscode.window.showErrorMessage(`Push failed: ${res.error}`);
+      this.post('error', { message: `Push failed: ${res.error}` });
+      return;
+    }
+    this.post('notice', { message: `Pushed ${res.branch} to ${res.remote}` });
+  }
+
+  // ------------------------------------------------------- plan -> act events
+  private async makePlan(message: string): Promise<void> {
+    if (!message.trim()) {
+      return;
+    }
+    const workspace = currentWorkspace();
+    this.reveal();
+    this.post('assistantStart', {});
+    this.post('delta', { content: 'Planning…' });
+    const res = await this.api.plan(message, workspace).catch((err) => ({
+      ok: false, error: err instanceof Error ? err.message : String(err),
+    } as PlanResponse));
+    this.post('assistantDone', {});
+    if (!res.ok) {
+      this.post('error', { message: res.error ?? 'Planning failed' });
+      return;
+    }
+    this.post('plan', { planId: res.plan_id, summary: res.summary, steps: res.steps,
+                        fallback: res.fallback === true });
+  }
+
+  private async runStep(planId: string, index: number, mutating: boolean): Promise<void> {
+    if (index < 0) {
+      return;
+    }
+    const workspace = currentWorkspace();
+    this.reveal();
+    this.post('stepStart', { index });
+    const res = await this.api.act(planId, index, workspace, mutating)
+      .catch((err) => ({ ok: false, error: err instanceof Error ? err.message : String(err),
+                         step_index: index, title: `Step ${index + 1}`, action: 'unknown',
+                         output: '', next_index: null } as ActResponse));
+    this.post('stepDone', {
+      index: res.step_index ?? index,
+      ok: res.ok === true,
+      title: res.title ?? `Step ${index + 1}`,
+      output: res.output ?? res.error ?? '',
+      hasPatch: Boolean(res.patch),
+    });
+    if (res.patch) {
+      this.offerPatch(workspace ?? '', [res.patch]);
     }
   }
 
@@ -137,6 +273,25 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     return this.pendingPatch !== undefined;
   }
 
+  /** Public entry points for the command palette / view title menus. */
+  async startReview(): Promise<void> {
+    await this.reviewChanges();
+  }
+
+  async startCommit(): Promise<void> {
+    await this.commitWithForge();
+  }
+
+  async startPush(): Promise<void> {
+    await this.pushToOrigin();
+  }
+
+  enablePlanMode(): void {
+    this.reveal();
+    this.post('planMode', {});
+    this.post('notice', { message: 'Plan & Act mode ON — type a goal to get runnable steps.' });
+  }
+
   private async previewPatches(): Promise<void> {
     const pending = this.pendingPatch;
     if (!pending) {
@@ -203,7 +358,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 <title>ForgeCoder</title>
 </head>
 <body>
-<header><span class="logo">&#9670;</span> ForgeCoder <button id="clear" title="Clear conversation">&#9000;</button></header>
+<header><span class="logo">&#9670;</span> ForgeCoder
+  <button id="review" title="Review working changes (git diff + AI review)">&#8635;</button>
+  <button id="commitBtn" title="Commit all changes">&#10003;</button>
+  <button id="planBtn" title="Plan &amp; Act mode: turn your next message into executable steps">&#9654;</button>
+  <button id="clear" title="Clear conversation">&#9000;</button>
+</header>
 <main id="messages"></main>
 <footer>
   <input id="input" type="text" placeholder="Ask ForgeCoder anything..." autocomplete="off" spellcheck="false">

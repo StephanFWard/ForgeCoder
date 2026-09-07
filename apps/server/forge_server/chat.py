@@ -74,6 +74,36 @@ async def chat(req: ContextRequest, state: AppState = Depends(get_state)) -> Str
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
+@router.post("/ask")
+async def ask(req: ContextRequest, state: AppState = Depends(get_state)) -> dict:
+    """Non-streaming chat (used by the MCP server and simple clients)."""
+    builder = ContextBuilder(state.index)
+    built = builder.build(
+        req.message,
+        workspace=req.workspace,
+        file=req.file,
+        selection=req.selection.as_tuple() if req.selection else None,
+        budget=state.config.max_chat_context,
+    )
+    context_text = "\n\n".join(s["text"] for s in built.sections)
+    user = req.message
+    if context_text:
+        from core.retrieval.budget import truncate_to_tokens
+        user += f"\n\nRepository context:\n{truncate_to_tokens(context_text, 2600)}"
+
+    from datetime import datetime
+    system = built.system + f"\n\nToday's date: {datetime.now():%Y-%m-%d (%A)}."
+    messages = build_chat_messages(system, user, None)
+    try:
+        answer = await state.inference.chat(
+            messages, temperature=0.3, max_tokens=1024,
+            presence_penalty=0.2, frequency_penalty=0.2,
+        )
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "answer": answer, "context_tokens": built.total_tokens}
+
+
 def _build_user_turn(built) -> str:
     """User turn = request + repository sections, fitted to the request budget."""
     total = built.request or ""
