@@ -20,6 +20,10 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.patching.apply import MultiPatch
 
 
 class PatchParseError(ValueError):
@@ -126,3 +130,40 @@ def parse_patch(payload: dict | str) -> list[FilePatch]:
             raise PatchParseError(f"No operations for {raw.get('path')!r}")
         patches.append(FilePatch(path=raw["path"], operations=ops))
     return patches
+
+
+def parse_multi(payload: dict | str) -> MultiPatch:
+    """Parse model output into a :class:`MultiPatch` (edits + file creations).
+
+    Expected shape::
+
+        {
+          "message": "optional commit message",
+          "files":   [ { "path": ..., "operations": [...] } ],
+          "creates": { "relpath": "full file content", ... }
+        }
+
+    ``files`` are validated through :func:`parse_patch`. ``creates`` are
+    written verbatim. Either may be empty.
+    """
+    from core.patching.apply import MultiPatch
+
+    if isinstance(payload, str):
+        payload = extract_json(payload)
+    if not isinstance(payload, dict):
+        raise PatchParseError("Patch payload must be an object")
+
+    patches = parse_patch(payload) if payload.get("files") else []
+    creates_raw = payload.get("creates") or {}
+    if not isinstance(creates_raw, dict):
+        raise PatchParseError("'creates' must be an object of path -> content")
+    creates: dict[str, str] = {}
+    for relpath, content in creates_raw.items():
+        if not isinstance(relpath, str) or not relpath:
+            raise PatchParseError("each create needs a non-empty path")
+        if not isinstance(content, str):
+            raise PatchParseError(f"content for {relpath!r} must be a string")
+        creates[relpath] = content
+    return MultiPatch(patches=patches, creates=creates,
+                      message=str(payload.get("message", ""))[:200])
+

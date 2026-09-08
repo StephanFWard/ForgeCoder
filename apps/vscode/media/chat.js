@@ -11,6 +11,8 @@
   const patchInfo = document.getElementById('patchInfo');
   const viewDiff = document.getElementById('viewDiff');
   const applyBtn = document.getElementById('apply');
+  const viewMultiDiff = document.getElementById('viewMultiDiff');
+  const applyMultiBtn = document.getElementById('applyMulti');
 
   const vscode = acquireVsCodeApi();
   let currentAssistant = null;
@@ -92,6 +94,8 @@
   commitBtn.addEventListener('click', function () { vscode.postMessage({ command: 'commit' }); });
   viewDiff.addEventListener('click', function () { vscode.postMessage({ command: 'viewPatches' }); });
   applyBtn.addEventListener('click', function () { vscode.postMessage({ command: 'applyPatch' }); });
+  viewMultiDiff.addEventListener('click', function () { vscode.postMessage({ command: 'viewMultiPatches' }); });
+  applyMultiBtn.addEventListener('click', function () { vscode.postMessage({ command: 'applyMultiPatch' }); });
   planBtn.addEventListener('click', function () {
     planMode = !planMode;
     planBtn.classList.toggle('active', planMode);
@@ -159,8 +163,15 @@
         patchInfo.textContent = 'Patch ready for ' + msg.path;
         patchBar.classList.remove('hidden');
         break;
+      case 'pendingMultiPatch':
+        patchInfo.textContent = 'Patch ready for ' + msg.count + ' file(s) — review before applying.';
+        patchBar.classList.remove('hidden');
+        break;
       case 'applied':
         patchInfo.textContent = 'Applied ' + msg.path + ' ✓';
+        break;
+      case 'multiApplied':
+        patchInfo.textContent = 'Applied ' + msg.files.length + ' file(s) ✓';
         break;
       case 'cleared':
         messages.innerHTML = '';

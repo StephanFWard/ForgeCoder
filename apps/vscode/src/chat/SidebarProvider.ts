@@ -6,7 +6,8 @@
  * streaming responses, and Apply Fix / View Diff patch actions.
  */
 import * as vscode from 'vscode';
-import { ForgeApi, FilePatch, ChatTurn, ActResponse, GitChangesResponse, PlanResponse } from '../client/api';
+import { ForgeApi, FilePatch, MultiPatchFile, ChatTurn, ActResponse, GitChangesResponse,
+  PlanResponse } from '../client/api';
 import { showPatchPreview } from '../ui/diff';
 import { currentWorkspace } from '../context/selection';
 
@@ -21,8 +22,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
   private readonly disposables: vscode.Disposable[] = [];
   private pendingPatch: PendingPatch | undefined;
+  private pendingMultiPatch: { workspace: string; patches: FilePatch[]; creates: Record<string, string>; message: string } | undefined;
   private history: Array<{ role: string; content: string }> = [];
   private streaming = false;
+  private planMode = false;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -58,11 +61,21 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       case 'applyPatch':
         await this.confirmApply();
         break;
+      case 'applyMultiPatch':
+        await this.confirmApplyMulti();
+        break;
       case 'viewPatches':
         await this.previewPatches();
         break;
+      case 'viewMultiPatches':
+        await this.previewMultiPatches();
+        break;
+      case 'createFile':
+        await this.createFile(String(msg.path ?? ''), String(msg.content ?? ''));
+        break;
       case 'clear':
         this.history = [];
+        this.planMode = false;
         this.post('cleared', {});
         break;
 
@@ -84,6 +97,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       case 'act':
         await this.runStep(String(msg.planId ?? ''), Number(msg.index ?? -1),
                            msg.action === 'test' || msg.action === 'commit');
+        break;
+      case 'togglePlanMode':
+        this.togglePlanMode();
         break;
     }
   }
@@ -196,10 +212,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       ok: res.ok === true,
       title: res.title ?? `Step ${index + 1}`,
       output: res.output ?? res.error ?? '',
-      hasPatch: Boolean(res.patch),
+      hasPatch: Boolean(res.patch || res.multiPatch),
     });
     if (res.patch) {
       this.offerPatch(workspace ?? '', [res.patch]);
+    } else if (res.multiPatch && res.multiPatch.length) {
+      this.pendingMultiPatch = { workspace: workspace ?? '', patches: res.multiPatch.map((f) => ({
+        path: f.path,
+        operations: f.operations ?? [],
+      })), creates: {}, message: '' };
+      this.pendingPatch = undefined;
+      this.reveal();
+      this.post('pendingMultiPatch', { count: res.multiPatch.length, paths: res.multiPatch.map((f) => f.path) });
     }
   }
 
@@ -263,14 +287,22 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   /** Store a pending patch produced by a code action and surface it in the sidebar. */
   offerPatch(workspace: string, patches: FilePatch[]): void {
     if (patches.length > 0) {
-      this.pendingPatch = { workspace, patch: patches[0] };
-      this.reveal();
-      this.post('pendingPatch', { path: patches[0].path });
+      if (patches.length === 1) {
+        this.pendingPatch = { workspace, patch: patches[0] };
+        this.reveal();
+        this.post('pendingPatch', { path: patches[0].path });
+      } else {
+        // Multi-file patch: store for bulk preview/apply.
+        this.pendingMultiPatch = { workspace, patches, creates: {}, message: '' };
+        this.pendingPatch = undefined;
+        this.reveal();
+        this.post('pendingMultiPatch', { count: patches.length, paths: patches.map((p) => p.path) });
+      }
     }
   }
 
   hasPendingPatch(): boolean {
-    return this.pendingPatch !== undefined;
+    return this.pendingPatch !== undefined || this.pendingMultiPatch !== undefined;
   }
 
   /** Public entry points for the command palette / view title menus. */
@@ -290,6 +322,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this.reveal();
     this.post('planMode', {});
     this.post('notice', { message: 'Plan & Act mode ON — type a goal to get runnable steps.' });
+  }
+
+  togglePlanMode(): void {
+    this.planMode = !this.planMode;
+    this.post('planMode', {});
+    this.post('notice', {
+      message: this.planMode
+        ? 'Plan & Act mode ON — your next message becomes a plan with runnable steps.'
+        : 'Plan & Act mode off.',
+    });
   }
 
   private async previewPatches(): Promise<void> {
@@ -338,6 +380,91 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this.post('applied', { path: pending.patch.path });
   }
 
+  /** Preview a multi-file patch set in VS Code's diff editor. */
+  private async previewMultiPatches(): Promise<void> {
+    const pending = this.pendingMultiPatch;
+    if (!pending) {
+      return;
+    }
+    const res = await this.api.multiPatchPreview(pending.workspace, pending.patches, pending.creates, pending.message);
+    if (!res.ok || !res.files?.length) {
+      void vscode.window.showErrorMessage(String(res.error ?? 'Preview failed'));
+      return;
+    }
+    // Show the first changed file in the diff editor, then reveal remaining via notification.
+    const first = res.files.find((f) => f.changed && f.diff);
+    if (first && first.original != null && first.proposed != null) {
+      await showPatchPreview(pending.workspace, {
+        path: first.path,
+        operations: (first.operations ?? []).filter((o) => o.type !== 'delete' || o.content),
+      }, this.api);
+    } else {
+      void vscode.window.showInformationMessage(`ForgeCoder: ${res.files.length} file(s) changed.`);
+    }
+    void vscode.window.showInformationMessage(`Previewed ${res.files.length} file(s) — ${res.files.filter((f) => f.created).length} new.`);
+  }
+
+  /** Apply a multi-file patch set atomically (rollback on failure). */
+  private async confirmApplyMulti(): Promise<void> {
+    const pending = this.pendingMultiPatch;
+    if (!pending) {
+      void vscode.window.showWarningMessage('No pending multi-file patch.');
+      return;
+    }
+    const allow = vscode.workspace.getConfiguration('forgecoder').get<boolean>('allowWriteFile', false);
+    if (!allow) {
+      const changed = pending.patches.filter((p) => p.operations.some((o) => o.type !== 'delete'));
+      const created = Object.keys(pending.creates);
+      const summary = [...changed.map((p) => p.path), ...created]
+        .map((p) => `  • ${p}`)
+        .join('\n');
+      const answer = await vscode.window.showWarningMessage(
+        `Apply ${changed.length} edit(s) and ${created.length} new file(s)?\n\n${summary}`,
+        { modal: true },
+        'Apply All',
+        'Cancel',
+      );
+      if (answer !== 'Apply All') {
+        return;
+      }
+    }
+    const result = await this.api.multiPatchApply(pending.workspace, pending.patches, pending.creates, pending.message, true);
+    if (!result.ok) {
+      void vscode.window.showErrorMessage(String(result.error ?? 'Multi-file apply failed'));
+      return;
+    }
+    void vscode.window.showInformationMessage(`Applied ${result.applied?.length ?? 0} file(s).`);
+    this.post('multiApplied', { files: result.applied ?? [] });
+  }
+
+  /** Create a brand-new file in the workspace after a confirmation prompt. */
+  private async createFile(path: string, content: string): Promise<void> {
+    const workspace = currentWorkspace();
+    if (!workspace) {
+      this.post('error', { message: 'Open a workspace folder first.' });
+      return;
+    }
+    const allow = vscode.workspace.getConfiguration('forgecoder').get<boolean>('allowWriteFile', false);
+    if (!allow) {
+      const answer = await vscode.window.showWarningMessage(
+        `Create new file ${path}?`,
+        { modal: true },
+        'Create',
+        'Cancel',
+      );
+      if (answer !== 'Create') {
+        return;
+      }
+    }
+    const full = vscode.Uri.file(workspace + '\\' + path.replace(/\//g, '\\'));
+    await vscode.workspace.fs.writeFile(full, new TextEncoder().encode(content));
+    void vscode.window.showInformationMessage(`Created ${path}`);
+    this.post('fileCreated', { path });
+    // Open the new file in the editor.
+    const doc = await vscode.workspace.openTextDocument(full);
+    await vscode.window.showTextDocument(doc);
+  }
+
   private post(command: string, payload: Record<string, unknown>): void {
     void this.view?.webview.postMessage({ command, ...payload });
   }
@@ -372,6 +499,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     <span id="patchInfo"></span>
     <button id="viewDiff">View Diff</button>
     <button id="apply">Apply Fix</button>
+    <button id="viewMultiDiff">View All</button>
+    <button id="applyMulti">Apply All</button>
   </div>
 </footer>
 <script nonce="${nonce}" src="${js}"></script>

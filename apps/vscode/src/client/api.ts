@@ -52,6 +52,31 @@ export interface FilePatch {
   operations: PatchOperation[];
 }
 
+export interface MultiPatchFile {
+  path: string;
+  diff?: string;
+  original?: string;
+  proposed?: string;
+  changed?: boolean;
+  created?: boolean;
+  operations?: PatchOperation[];
+}
+
+export interface MultiPatchPreviewResponse {
+  ok: boolean;
+  error?: string;
+  summary?: string;
+  files?: MultiPatchFile[];
+}
+
+export interface MultiPatchApplyResponse {
+  ok: boolean;
+  error?: string;
+  summary?: string;
+  applied?: string[];
+  files?: MultiPatchFile[];
+}
+
 export interface PatchPreviewResponse {
   ok: boolean;
   error?: string;
@@ -120,6 +145,7 @@ export interface ActResponse {
   title: string;
   output: string;
   patch?: FilePatch;
+  multiPatch?: MultiPatchFile[];
   next_index?: number | null;
 }
 
@@ -217,6 +243,23 @@ export class ForgeApi {
       return Promise.resolve({ ok: false, error: 'Confirmation required before a push.' });
     }
     return this.client.json('/v1/git/push', { workspace }, undefined, { 'X-Forge-Confirm': 'true' });
+  }
+
+  // ------------------------------------------------------------ multi-file patches
+  multiPatchPreview(workspace: string, patches: FilePatch[], creates: Record<string, string> = {}, message = ''): Promise<MultiPatchPreviewResponse> {
+    return this.client.json('/v1/patch/multi-preview', { workspace, patches, creates, message });
+  }
+
+  multiPatchApply(workspace: string, patches: FilePatch[], creates: Record<string, string> = {}, message = '', confirmed: boolean): Promise<MultiPatchApplyResponse> {
+    if (!confirmed) {
+      return Promise.resolve({ ok: false, error: 'Confirmation required before applying multi-file writes.' });
+    }
+    return this.client.json(
+      '/v1/patch/multi-apply',
+      { workspace, patches, creates, message },
+      undefined,
+      { 'X-Forge-Confirm': 'true' },
+    );
   }
 
   // ------------------------------------------------------------ plan -> act

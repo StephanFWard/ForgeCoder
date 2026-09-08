@@ -1,17 +1,16 @@
-"""Safe application of line-numbered operations to a file.
+"""Safe application of line-numbered operations to a file or across files.
 
-Line numbers are 1-based inclusive, matching VS Code's editor coordinates
-(which is what the model sees in context). The caller is always responsible
-for showing a preview first; this module never writes anything by itself
-except through ``apply_patch`` which takes an explicit path + confirmation.
+Multi-file support (v0.3): MultiPatch bundles edits to existing files
+with brand-new file creations and applies them atomically - if any file
+fails, all already-written files are rolled back.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from core.patching.diff import make_diff
-from core.patching.parser import FilePatch, Operation
+from core.patching.parser import FilePatch, MultiPatch, Operation
 
 
 class PatchError(ValueError):
@@ -75,6 +74,84 @@ def preview_patch(path: str | Path, patch: FilePatch) -> PatchResult:
         diff=make_diff(original, proposed, patch.path),
         applied=False,
     )
+
+
+# ----------------------------------------------------------------- multi-file
+@dataclass
+class MultiPatch:
+    """A cross-file change set: edits to existing files + brand-new files.
+
+    ``patches`` are edits to existing files (the original system). ``creates``
+    are files that do not yet exist — the model supplies their full content
+    keyed by repository-relative path. Both are applied together atomically.
+    """
+    patches: list[FilePatch] = field(default_factory=list)
+    creates: dict[str, str] = field(default_factory=dict)
+    message: str = ""
+
+
+def preview_multi(root: str | Path, multi: MultiPatch) -> list[PatchResult]:
+    """In-memory preview of a cross-file change set (no writes)."""
+    root = Path(root)
+    results: list[PatchResult] = []
+    for patch in multi.patches:
+        results.append(preview_patch(root / patch.path, patch))
+    for relpath, content in multi.creates.items():
+        full = root / relpath
+        try:
+            original = full.read_text(encoding="utf-8")
+        except OSError:
+            original = ""
+        results.append(PatchResult(
+            path=relpath, original=original, proposed=content,
+            diff=make_diff(original, content, relpath), created=original == "",
+        ))
+    return results
+
+
+def apply_multi(root: str | Path, multi: MultiPatch) -> list[PatchResult]:
+    """Apply a cross-file change set atomically with rollback.
+
+    Every file is previewed first; if any preview raises, nothing is written.
+    Files are then written one at a time. If a write fails partway through,
+    every file already written is restored from its captured originals
+    (created files are removed). Returns the results with ``applied=True``.
+    """
+    root = Path(root)
+    results = preview_multi(root, multi)
+
+    backups: list[tuple[Path, str, bool]] = []  # (path, original_or_empty, existed)
+    try:
+        for patch in multi.patches:
+            full = root / patch.path
+            if not full.exists():
+                raise PatchError(f"file to patch does not exist: {patch.path}")
+            existed = full.exists()
+            backups.append((full, full.read_text(encoding="utf-8") if existed else "", existed))
+            full.write_text(preview_patch(full, patch).proposed, encoding="utf-8")
+        for relpath, content in multi.creates.items():
+            full = root / relpath
+            full.parent.mkdir(parents=True, exist_ok=True)
+            existed = full.exists()
+            backups.append((full, full.read_text(encoding="utf-8") if existed else "", existed))
+            full.write_text(content, encoding="utf-8")
+    except Exception:
+        for full, original, existed in reversed(backups):
+            if not existed:
+                try:
+                    full.unlink()
+                except OSError:
+                    pass
+            else:
+                try:
+                    full.write_text(original, encoding="utf-8")
+                except OSError:
+                    pass
+        raise
+
+    for r in results:
+        r.applied = True
+    return results
 
 
 def apply_patch(path: str | Path, patch: FilePatch) -> PatchResult:
