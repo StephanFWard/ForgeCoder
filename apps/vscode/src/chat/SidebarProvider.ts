@@ -220,10 +220,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       this.pendingMultiPatch = { workspace: workspace ?? '', patches: res.multiPatch.map((f) => ({
         path: f.path,
         operations: f.operations ?? [],
-      })), creates: {}, message: '' };
+      })), creates: res.creates ?? {}, message: '' };
       this.pendingPatch = undefined;
       this.reveal();
-      this.post('pendingMultiPatch', { count: res.multiPatch.length, paths: res.multiPatch.map((f) => f.path) });
+      const createdPaths = Object.keys(res.creates ?? {});
+      this.post('pendingMultiPatch', {
+        count: res.multiPatch.length + createdPaths.length,
+        paths: res.multiPatch.map((f) => f.path).concat(createdPaths),
+      });
     }
   }
 

@@ -56,14 +56,15 @@ class InferenceClient:
                    max_tokens: int = 1024, stop: list[str] | None = None,
                    stream: bool = False,
                    presence_penalty: float = 0.0, frequency_penalty: float = 0.0,
-                   grammar: str | None = None) -> str:
+                   grammar: str | None = None,
+                   schema: dict | None = None) -> str:
         if stream:
             text = ""
             async for delta in self.chat_stream(messages, temperature=temperature,
                                                 max_tokens=max_tokens, stop=stop,
                                                 presence_penalty=presence_penalty,
                                                 frequency_penalty=frequency_penalty,
-                                                grammar=grammar):
+                                                schema=schema):
                 text += delta
             return text
         payload: dict = {
@@ -76,7 +77,15 @@ class InferenceClient:
         }
         if stop:
             payload["stop"] = stop
-        if grammar:
+        if schema:
+            # llama.cpp grammar-constrained generation via JSON schema: the
+            # server converts the schema to a GBNF grammar internally, which
+            # also guarantees proper string escaping (raw newlines in model
+            # JSON strings are invalid JSON otherwise).
+            payload["response_format"] = {
+                "type": "json_schema", "json_schema": {"schema": schema},
+            }
+        elif grammar:
             payload["grammar"] = {"type": "grammar", "value": grammar}
         try:
             resp = await self.client.post("/v1/chat/completions", json=payload)
@@ -93,7 +102,8 @@ class InferenceClient:
                           max_tokens: int = 1024, stop: list[str] | None = None,
                           presence_penalty: float = 0.0,
                           frequency_penalty: float = 0.0,
-                          grammar: str | None = None) -> AsyncIterator[str]:
+                          grammar: str | None = None,
+                          schema: dict | None = None) -> AsyncIterator[str]:
         from core.inference.streaming import iter_chat_deltas
 
         payload: dict = {
@@ -106,7 +116,11 @@ class InferenceClient:
         }
         if stop:
             payload["stop"] = stop
-        if grammar:
+        if schema:
+            payload["response_format"] = {
+                "type": "json_schema", "json_schema": {"schema": schema},
+            }
+        elif grammar:
             payload["grammar"] = {"type": "grammar", "value": grammar}
         try:
             async with self.client.stream("POST", "/v1/chat/completions", json=payload) as resp:

@@ -146,6 +146,8 @@ export interface ActResponse {
   output: string;
   patch?: FilePatch;
   multiPatch?: MultiPatchFile[];
+  creates?: Record<string, string>;
+  verification?: { valid: boolean; confidence: number; issues: string[]; citations: string[] };
   next_index?: number | null;
 }
 

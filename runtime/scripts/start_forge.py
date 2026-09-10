@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import signal
 import subprocess
 import sys
@@ -22,6 +23,14 @@ ROOT = Path(__file__).resolve().parents[2]
 LLAMA = [sys.executable, str(ROOT / "runtime" / "scripts" / "launch_llama.py")]
 FORGE = [sys.executable, "-m", "uvicorn", "forge_server.main:app",
          "--host", "127.0.0.1", "--port", "8787"]
+
+# Both import roots must be visible to the API process:
+#   repo root  -> core.*    (indexer, retrieval, inference, ...)
+#   apps/server-> forge_server.*  (the FastAPI app)
+FORGE_ENV = {
+    **os.environ,
+    "PYTHONPATH": os.pathsep.join([str(ROOT / "apps" / "server"), str(ROOT)]),
+}
 
 LLAMA_URL = "http://127.0.0.1:8080"
 FORGE_URL = "http://127.0.0.1:8787"
@@ -65,7 +74,7 @@ def main() -> int:
     if service_up(FORGE_URL):
         print(f"Forge API already running at {FORGE_URL} — reusing it.")
     else:
-        procs.append(subprocess.Popen(FORGE, cwd=ROOT))
+        procs.append(subprocess.Popen(FORGE, cwd=ROOT, env=FORGE_ENV))
 
     if not procs:
         print("ForgeCoder stack is up:")

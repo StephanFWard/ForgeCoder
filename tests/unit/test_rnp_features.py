@@ -305,3 +305,90 @@ def test_prompt_files_present():
     pdir = Path(__file__).resolve().parents[2] / "runtime" / "prompts"
     for name in ("hierarchical-chat.txt", "verify.txt"):
         assert (pdir / name).is_file(), f"{name} should exist in runtime/prompts"
+
+
+# ---------------------------------------------------------------------------
+# Plan -> Act creation behavior (edit steps can create brand-new files)
+# ---------------------------------------------------------------------------
+
+def test_creation_request_detection():
+    from forge_server.plans import _is_creation_request
+
+    assert _is_creation_request("Create a new repository named 'tic tac toe'")
+    assert _is_creation_request("write an HTML page for a game")
+    assert _is_creation_request("generate a Python module for parsing")
+    assert _is_creation_request("scaffold a react component")
+    # Editing existing code is NOT creation
+    assert not _is_creation_request("Fix the null pointer in UserService")
+    assert not _is_creation_request("Add validation to the greet method")
+
+
+def test_multi_to_act_shape():
+    from forge_server.plans import _multi_to_act
+
+    from core.patching.parser import FilePatch, MultiPatch, Operation
+
+    multi = MultiPatch(
+        patches=[FilePatch(path="src/a.py", operations=[
+            Operation(type="replace", start_line=1, end_line=2, content="x = 1"),
+        ])],
+        creates={"index.html": "<html></html>"},
+        message="demo",
+    )
+    shaped = _multi_to_act(multi)
+    assert shaped["kind"] == "multi"
+    assert shaped["creates"] == {"index.html": "<html></html>"}
+    assert shaped["files"][0]["path"] == "src/a.py"
+    assert shaped["message"] == "demo"
+
+
+def test_parse_multi_creation_shape():
+    from core.patching.parser import parse_multi
+
+    raw = '{"message": "made page", "creates": {"tic/index.html": "<!DOCTYPE html>"}}'
+    multi = parse_multi(raw)
+    assert multi.creates == {"tic/index.html": "<!DOCTYPE html>"}
+    assert multi.message == "made page"
+    assert not multi.patches
+
+
+def test_create_grammar_present():
+    gdir = Path(__file__).resolve().parents[2] / "runtime" / "grammars"
+    assert (gdir / "create.gbnf").is_file(), "create.gbnf should exist in runtime/grammars"
+
+
+def test_placeholder_detection():
+    from forge_server.plans import _looks_placeholder
+
+    assert _looks_placeholder("public class X { // Complete code here }")
+    assert _looks_placeholder("x")  # too short
+    assert _looks_placeholder("def stub():\n    TODO")
+    assert not _looks_placeholder("<!DOCTYPE html>\n<html><body><h1>Tic</h1></body></html>")
+    assert not _looks_placeholder(
+        "const board = [];\nlet currentPlayer = 'X';\nfunction checkWin() {\n  return false;\n}\n"
+    )
+
+
+def test_inference_client_accepts_schema():
+    """The client's chat signature must accept a JSON schema (json_schema response_format)."""
+    import inspect
+
+    from core.inference.client import InferenceClient
+
+    sig = inspect.signature(InferenceClient.chat)
+    assert "schema" in sig.parameters
+    sig_stream = inspect.signature(InferenceClient.chat_stream)
+    assert "schema" in sig_stream.parameters
+
+
+def test_start_forge_sets_pythonpath():
+    """The stack launcher must expose both import roots to the API process."""
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2] / "runtime" / "scripts" / "start_forge.py").read_text(
+        encoding="utf-8"
+    )
+    assert "PYTHONPATH" in src
+    assert 'str(ROOT / "apps" / "server")' in src  # forge_server import root
+    assert "env=FORGE_ENV" in src  # the uvicorn subprocess inherits it
+

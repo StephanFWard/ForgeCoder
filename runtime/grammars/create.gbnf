@@ -1,0 +1,19 @@
+# Grammar for structured file-creation output (llama.cpp grammar passthrough).
+# Constrains generation to the exact JSON shape expected by parse_multi() in
+# core/patching/parser.py:  {"message": ..., "creates": {"relpath": "content"}}
+#
+# RNP inspiration (PMC10637337): a new artifact is composed recursively from
+# primitives the model already knows; the grammar fixes the top-level shape so
+# downstream verification (core/inference/verify.py) can parse it reliably.
+
+root   ::= object
+
+object ::= "{" ws (message "," ws creates) ws "}"
+string ::= "\"" ([^"\\] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]))* "\""
+ws     ::= [ \t\n]*
+
+message ::= "\"" ws "message" ws ":" ws string
+creates ::= "\"" ws "creates" ws ":" ws create_object
+
+create_object ::= "{" ws (create_entry ("," ws create_entry)*)? ws "}"
+create_entry  ::= string ":" ws string
