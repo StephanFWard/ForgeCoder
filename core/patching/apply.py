@@ -6,7 +6,7 @@ fails, all already-written files are rolled back.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from core.patching.diff import make_diff
@@ -77,19 +77,6 @@ def preview_patch(path: str | Path, patch: FilePatch) -> PatchResult:
 
 
 # ----------------------------------------------------------------- multi-file
-@dataclass
-class MultiPatch:
-    """A cross-file change set: edits to existing files + brand-new files.
-
-    ``patches`` are edits to existing files (the original system). ``creates``
-    are files that do not yet exist — the model supplies their full content
-    keyed by repository-relative path. Both are applied together atomically.
-    """
-    patches: list[FilePatch] = field(default_factory=list)
-    creates: dict[str, str] = field(default_factory=dict)
-    message: str = ""
-
-
 def preview_multi(root: str | Path, multi: MultiPatch) -> list[PatchResult]:
     """In-memory preview of a cross-file change set (no writes)."""
     root = Path(root)

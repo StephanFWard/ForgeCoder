@@ -13,13 +13,12 @@ within nested spatial reference frames.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 from pathlib import Path
+from typing import Any
 
 from core.retrieval.budget import estimate_tokens, fit_to_budget, truncate_to_tokens
 from core.retrieval.context import _selection_snippet, load_prompt
 from core.retrieval.search import SearchEngine
-
 
 # ---------------------------------------------------------------------------
 # Tree node — one unit in the retrieval hierarchy
@@ -34,7 +33,7 @@ class TreeNode:
     kind: str
     label: str                      # filename, symbol name, or chunk header
     content: str = ""
-    children: list["TreeNode"] = field(default_factory=list)
+    children: list[TreeNode] = field(default_factory=list)
     tokens: int = 0
     score: float = 0.0
     # file/path metadata (meaningful for file/symbol/chunk nodes)
@@ -104,6 +103,14 @@ def _tree_summary(node: TreeNode) -> dict:
     return summary
 
 
+def count_subtree(node: TreeNode) -> int:
+    """Total token count of a node including its descendants."""
+    total = node.tokens
+    for child in node.children:
+        total += count_subtree(child)
+    return total
+
+
 # ---------------------------------------------------------------------------
 # Hierarchical builder — Phase 1/2/3 retrieval + budget pruning
 # ---------------------------------------------------------------------------
@@ -125,7 +132,6 @@ class HierarchicalContextBuilder:
         self.index = index
         self.search_engine = search_engine
         if search_engine is None and index is not None:
-            from core.retrieval.search import SearchEngine  # noqa: F811
             self.search_engine = SearchEngine(index)
 
     def build(self, message: str, *, workspace: str | None = None,

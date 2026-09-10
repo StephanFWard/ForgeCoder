@@ -66,6 +66,17 @@ def get_plan_store(state: AppState) -> PlanStore:
     return state.plans  # type: ignore[attr-defined]
 
 
+def _load_grammar(name: str) -> str | None:
+    """Load a GBNF grammar file from runtime/grammars (None if missing)."""
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[3] / "runtime" / "grammars" / f"{name}.gbnf"
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
 def _fallback_plan(message: str) -> dict:
     """No model / unparseable output: still return a usable plan."""
     return {
@@ -93,6 +104,7 @@ async def plan(req: PlanRequest, state: AppState = Depends(get_state)) -> dict:
         raw = await state.inference.chat(
             build_chat_messages(load_prompt("plan"), user, None),
             temperature=0.1, max_tokens=600,
+            grammar=_load_grammar("plan"),
         )
         data = extract_json(raw)
         steps = [

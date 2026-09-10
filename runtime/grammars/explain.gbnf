@@ -1,0 +1,23 @@
+# Grammar for structured explanation output (llama.cpp / llama-server --grammar-file).
+# Constrains generation to a structured explanation with topic, details, and code references.
+#
+# RNP inspiration (PMC10637337): state pathway interpretation — "what" the code
+# does, decomposed into explainable parts.
+
+root   ::= object
+
+object ::= "{" ws (topic "," ws explanation "," ws references) ws "}"
+string ::= "\"" ([^\"\\] | "\\" (["\\/] | "n" | "t" | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]))* "\""
+ws     ::= [ \t\n]*
+
+topic     ::= "\"" ws "topic" ws ":" ws string
+explanation ::= "\"" ws "explanation" ws ":" ws string
+references ::= "\"" ws "references" ws ":" ws ref_array
+
+ref_array ::= "[" ws (ref_obj ("," ws ref_obj)*)? ws "]"
+ref_obj   ::= "{" ws (ref_path "," ws ref_start "," ws ref_end) ws "}"
+ref_path  ::= "\"" ws "path" ws ":" ws string
+ref_start ::= "\"" ws "start_line" ws ":" ws number
+ref_end   ::= "\"" ws "end_line" ws ":" ws number
+
+number ::= "-" ? ([0-9] | [1-9] [0-9]*)

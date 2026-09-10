@@ -19,11 +19,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from core.patching.apply import MultiPatch
+from dataclasses import dataclass, field
 
 
 class PatchParseError(ValueError):
@@ -63,6 +59,19 @@ class FilePatch:
 
 
 _VALID_TYPES = {"insert", "replace", "delete"}
+
+
+@dataclass
+class MultiPatch:
+    """A cross-file change set: edits to existing files + brand-new files.
+
+    ``patches`` are edits to existing files (the original system). ``creates``
+    are files that do not yet exist — the model supplies their full content
+    keyed by repository-relative path. Both are applied together atomically.
+    """
+    patches: list[FilePatch] = field(default_factory=list)
+    creates: dict[str, str] = field(default_factory=dict)
+    message: str = ""
 
 
 def extract_json(text: str) -> dict:
@@ -146,8 +155,6 @@ def parse_multi(payload: dict | str) -> MultiPatch:
     ``files`` are validated through :func:`parse_patch`. ``creates`` are
     written verbatim. Either may be empty.
     """
-    from core.patching.apply import MultiPatch
-
     if isinstance(payload, str):
         payload = extract_json(payload)
     if not isinstance(payload, dict):

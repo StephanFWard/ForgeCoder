@@ -55,13 +55,15 @@ class InferenceClient:
     async def chat(self, messages: list[dict], *, temperature: float = 0.2,
                    max_tokens: int = 1024, stop: list[str] | None = None,
                    stream: bool = False,
-                   presence_penalty: float = 0.0, frequency_penalty: float = 0.0) -> str:
+                   presence_penalty: float = 0.0, frequency_penalty: float = 0.0,
+                   grammar: str | None = None) -> str:
         if stream:
             text = ""
             async for delta in self.chat_stream(messages, temperature=temperature,
                                                 max_tokens=max_tokens, stop=stop,
                                                 presence_penalty=presence_penalty,
-                                                frequency_penalty=frequency_penalty):
+                                                frequency_penalty=frequency_penalty,
+                                                grammar=grammar):
                 text += delta
             return text
         payload: dict = {
@@ -74,6 +76,8 @@ class InferenceClient:
         }
         if stop:
             payload["stop"] = stop
+        if grammar:
+            payload["grammar"] = {"type": "grammar", "value": grammar}
         try:
             resp = await self.client.post("/v1/chat/completions", json=payload)
             resp.raise_for_status()
@@ -88,7 +92,8 @@ class InferenceClient:
     async def chat_stream(self, messages: list[dict], *, temperature: float = 0.2,
                           max_tokens: int = 1024, stop: list[str] | None = None,
                           presence_penalty: float = 0.0,
-                          frequency_penalty: float = 0.0) -> AsyncIterator[str]:
+                          frequency_penalty: float = 0.0,
+                          grammar: str | None = None) -> AsyncIterator[str]:
         from core.inference.streaming import iter_chat_deltas
 
         payload: dict = {
@@ -101,6 +106,8 @@ class InferenceClient:
         }
         if stop:
             payload["stop"] = stop
+        if grammar:
+            payload["grammar"] = {"type": "grammar", "value": grammar}
         try:
             async with self.client.stream("POST", "/v1/chat/completions", json=payload) as resp:
                 resp.raise_for_status()
