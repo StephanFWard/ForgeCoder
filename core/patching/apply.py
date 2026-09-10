@@ -24,6 +24,7 @@ class PatchResult:
     proposed: str
     diff: str
     applied: bool = False
+    created: bool = False
 
     @property
     def changed(self) -> bool:
