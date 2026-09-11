@@ -69,6 +69,32 @@ def test_plan_fallback_shape():
                for s in plan["steps"])
 
 
+def test_plan_fallback_creation_fps_game():
+    """The FPS creation request must plan per-file creation, not investigation."""
+    from apps.server.forge_server.plans import _fallback_plan
+
+    plan = _fallback_plan("Please create a local first person shooting game to play locally.")
+    actions = [s["action"] for s in plan["steps"]]
+    assert actions[0] == "search"
+    assert "edit" in actions and "test" in actions
+    assert any("game.py" in s["detail"] for s in plan["steps"] if s["action"] == "edit")
+
+
+def test_plan_fallback_creation_tictactoe():
+    from apps.server.forge_server.plans import _fallback_plan
+
+    plan = _fallback_plan("Create a new repository named 'tic tac toe'")
+    assert any("index.html" in s["detail"] for s in plan["steps"] if s["action"] == "edit")
+
+
+def test_is_creation_request_variants():
+    from apps.server.forge_server.plans import _is_creation_request
+
+    assert _is_creation_request("Please create a local first person shooting game to play locally.")
+    assert _is_creation_request("Create a new repository named 'tic tac toe'")
+    assert not _is_creation_request("find the auth bug in login.py")
+
+
 def test_plan_store_roundtrip():
     from apps.server.forge_server.plans import PlanStore
 

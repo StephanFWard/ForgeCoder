@@ -28,7 +28,6 @@ def _split_clauses(message: str) -> list[str]:
     raw = _SENT_SPLIT.split(message.strip())
     parts = [s.strip().rstrip(".;?").strip() for s in raw if s.strip()]
     return [p for p in parts if len(p) > 3 and p.split()[0].lower() not in ("and", "or", "but")]
-    return [p for p in parts if len(p) > 3 and p.split()[0].lower() not in ("and", "or", "but")]
 
 
 _FILENAME_RE = re.compile(r"\b[\w\-./\\]+\.(py|java|ts|tsx|js|jsx|go|rs|c|cpp|h|cs|sql|yaml|yml|json|md|toml)\b", re.IGNORECASE)

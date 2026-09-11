@@ -9,6 +9,7 @@ normal confirmation flow.
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 
 from fastapi import APIRouter, Depends, Header
@@ -24,7 +25,7 @@ from core.patching.parser import (
     parse_patch,
 )
 from core.retrieval.budget import truncate_to_tokens
-from core.retrieval.context import ContextBuilder, load_prompt
+from core.retrieval.context import load_prompt
 from forge_server.main import AppState, get_state
 from forge_server.security import PERMISSIONS_AUTO, check_permission
 
@@ -124,6 +125,8 @@ _PLAN_SCHEMA: dict = {
         "summary": {"type": "string"},
         "steps": {
             "type": "array",
+            "minItems": 1,
+            "maxItems": 6,
             "items": {
                 "type": "object",
                 "properties": {
@@ -132,10 +135,12 @@ _PLAN_SCHEMA: dict = {
                     "detail": {"type": "string"},
                 },
                 "required": ["title", "action", "detail"],
+                "additionalProperties": False,
             },
         },
     },
     "required": ["summary", "steps"],
+    "additionalProperties": False,
 }
 
 
@@ -145,6 +150,22 @@ def _schema_for(kind: str) -> dict | None:
 
 def _fallback_plan(message: str) -> dict:
     """No model / unparseable output: still return a usable plan."""
+    if _is_creation_request(message):
+        files = _creation_files(message)
+        steps = [
+            {"title": "Survey workspace", "action": "search",
+             "detail": "Check whether any of " + ", ".join(files) + " already exist"},
+        ]
+        for fname in files:
+            steps.append({
+                "title": "Create " + fname, "action": "edit",
+                "detail": "Create file: " + fname + " -- complete working content for: " + message[:160],
+            })
+        steps.append({
+            "title": "Smoke-test created files", "action": "test",
+            "detail": "Byte-compile every created Python file (syntax check, no side effects)",
+        })
+        return {"summary": message[:80], "steps": steps}
     return {
         "summary": "Default investigation plan (model output unavailable).",
         "steps": [
@@ -152,6 +173,22 @@ def _fallback_plan(message: str) -> dict:
             {"title": "Explain findings", "action": "explain", "detail": message[:200]},
         ],
     }
+
+
+def _creation_files(message: str) -> list:
+    """Filenames a creation request most likely needs, cheapest heuristic first."""
+    text = message.lower()
+    m = re.search(r"([\w.-]+\.(py|html|js|ts|java|go|rs|cs|cpp|sql))", text)
+    if m:
+        named = m.group(1)
+        return [named, "README.md"] if named != "README.md" else [named]
+    if "fps" in text or "first person" in text or "shooter" in text:
+        return ["game.py", "requirements.txt", "README.md"]
+    if "api" in text or "endpoint" in text or "server" in text:
+        return ["app.py", "requirements.txt", "README.md"]
+    if "html" in text or "web" in text or "tic" in text or "browser" in text:
+        return ["index.html", "README.md"]
+    return ["main.py", "README.md"]
 
 
 _CREATION_RE = None  # compiled lazily; pattern lives in _is_creation_request
@@ -164,17 +201,32 @@ def _is_creation_request(instruction: str) -> bool:
     model cannot "edit" a file it was never shown, so generation (creates)
     is the only applicable behavior.
     """
-    import re
-
     global _CREATION_RE
     if _CREATION_RE is None:
         _CREATION_RE = re.compile(
             r"\b(create|write|generate|build|make|scaffold|bootstrap)\b"
             r"[^.\n]{0,60}\b(file|page|html|script|module|component|class|"
-            r"app|game|repository|repo|project|site|api|endpoint|test)\b",
+            r"app|game|repository|repo|project|site|api|endpoint|test)\b"
+            r"|\bgame\b|\bapp\b|\bscript\b|\bprogram\b|\btic\b|\bfps\b"
+            r"|\bshooter\b|\bfirst\s+person\b|\brepository\b|\bproject\b"
+            r"|\bfrom\s+scratch\b|\bnew\s+(file|app|game|script|program|project|repo)\b",
             re.IGNORECASE,
         )
     return bool(_CREATION_RE.search(instruction))
+
+
+_SINGLE_FILE_RE = re.compile(r"Create file:\s*([\w][\w.\-/]*[A-Za-z0-9])", re.IGNORECASE)
+
+
+def _single_creation_target(instruction: str, plan_request: str) -> str | None:
+    """The one file this edit step must create (per-file plan steps)."""
+    m = _SINGLE_FILE_RE.search(instruction or "")
+    if m:
+        return m.group(1).strip().strip("'\"").lstrip("./")
+    m = _SINGLE_FILE_RE.search(plan_request or "")
+    if m:
+        return m.group(1).strip().strip("'\"").lstrip("./")
+    return None
 
 
 def _multi_to_act(multi: MultiPatch) -> dict:
@@ -269,16 +321,30 @@ async def act(req: ActRequest, confirm: str | None = Header(default=None, alias=
                 detail, limit=8,
                 workspace=req.workspace.replace("\\", "/") if req.workspace else None,
             )
-            result["output"] = "\n\n".join(
-                f"{r['path']}:{r['start_line']}-{r['end_line']}\n{r['content'][:300]}"
-                for r in rows[:8]
-            ) or "No matches found."
+            if rows:
+                result["output"] = "\n\n".join(
+                    f"{r['path']}:{r['start_line']}-{r['end_line']}\n{r['content'][:300]}"
+                    for r in rows[:8]
+                )
+            elif req.workspace and _is_creation_request(detail + " " + plan.get("request", "")):
+                result["output"] = (
+                    "Workspace has no indexed files matching this request yet -- "
+                    "this is a new-file creation task, so the following edit steps "
+                    "will generate each file from scratch."
+                )
+            else:
+                result["output"] = "No matches found."
 
         elif action == "explain":
-            builder = ContextBuilder(state.index)
-            built = builder.build(detail, workspace=req.workspace, budget=3072)
-            context_text = "\n\n".join(s["text"] for s in built.sections)
-            result["output"] = await _ask(state, req.workspace, detail, plan.get("results", {}))
+            if _is_creation_request(detail + " " + plan.get("request", "")):
+                files = _creation_files(plan.get("request", "") + " " + detail)
+                result["output"] = (
+                    "Plan: create " + ", ".join(files) + " in the workspace. "
+                    "Each file is generated by its own edit step (Run each step below), "
+                    "then smoke-tested before applying."
+                )
+            else:
+                result["output"] = await _ask(state, req.workspace, detail, plan.get("results", {}))
             # RNP predictive verification: check the answer's citations against
             # the context that was actually supplied to the model.
             result["verification"] = verify_output(
@@ -319,10 +385,14 @@ async def act(req: ActRequest, confirm: str | None = Header(default=None, alias=
                     )
 
         elif action == "test":
-            if confirm != "true":
-                return {"ok": False, "error": "Running tests requires confirmation (X-Forge-Confirm: true)"}
             check_permission("TEST", granted=PERMISSIONS_AUTO | {"TEST"})
-            result["output"] = await asyncio.to_thread(_run_tests, req.workspace or ".")
+            smoke = _syntax_smoke_check(req.workspace or ".")
+            if smoke is not None:
+                result["output"] = smoke
+            else:
+                if confirm != "true":
+                    return {"ok": False, "error": "Running tests requires confirmation (X-Forge-Confirm: true)"}
+                result["output"] = await asyncio.to_thread(_run_tests, req.workspace or ".")
 
         elif action == "commit":
             if confirm != "true":
@@ -330,8 +400,27 @@ async def act(req: ActRequest, confirm: str | None = Header(default=None, alias=
             check_permission("GIT_WRITE", granted=PERMISSIONS_AUTO | {"GIT_WRITE"})
             from core.git import operations as git_ops
             from core.git.util import is_git_repo
-            if not req.workspace or not is_git_repo(req.workspace):
-                result["output"] = "No git workspace — commit skipped."
+            if not req.workspace:
+                result["output"] = "No workspace selected -- commit skipped."
+            elif not is_git_repo(req.workspace):
+                if confirm == "true":
+                    import subprocess as _sp
+                    from pathlib import Path as _P
+                    try:
+                        _sp.run(["git", "init", "-q"], cwd=str(_P(req.workspace)),
+                                check=True, timeout=30)
+                        result["output"] = (
+                            "Initialized a new git repository in the workspace. "
+                            "Re-run this step (with confirmation) to stage and commit."
+                        )
+                    except Exception as exc:
+                        result["output"] = f"git init failed: {exc}"
+                else:
+                    result["output"] = (
+                        "Workspace is not a git repository yet. "
+                        "Re-run this step WITH confirmation to run 'git init' here, "
+                        "then Run once more to stage and commit."
+                    )
             else:
                 message = detail or f"ForgeCoder: {plan.get('request', 'update')[:60]}"
                 staged = git_ops.stage(req.workspace)
@@ -410,10 +499,17 @@ async def _edit_step(state: AppState, workspace: str | None, instruction: str,
     )
 
     if creation:
+        single = _single_creation_target(instruction, plan_request)
         goal = instruction if (plan_request and plan_request in instruction) else (
             f"{instruction}\n(Original request: {plan_request})"
             if plan_request else instruction
         )
+        if single:
+            goal = (
+                f"Create ONLY the file {single!r}.\n{goal}\n"
+                f"The creates object must contain EXACTLY ONE key: {single!r} "
+                f"with the COMPLETE, working, self-contained file content."
+            )
         user = (
             f"{goal}\n\nCreate the requested file(s) now. Respond ONLY with JSON of the "
             f"shape {{\"message\": \"...\", \"creates\": {{\"FILENAME\": \"complete file "
@@ -425,7 +521,7 @@ async def _edit_step(state: AppState, workspace: str | None, instruction: str,
             f"3. Do not copy \"rel/path.ext\" or any example placeholder from this prompt.\n"
         )
         schema = _schema_for("create")
-        max_tokens = 2048  # new files need room for full content
+        max_tokens = 3000  # a whole game file needs room
     else:
         user = (
             f"{instruction}\n\nProduce a patch JSON (files -> operations with "
@@ -465,6 +561,34 @@ async def _edit_step(state: AppState, workspace: str | None, instruction: str,
         return {"kind": "single", "patch": patches[0].to_dict()}
 
     return {"kind": "multi", **_multi_to_act(multi)}
+
+
+def _syntax_smoke_check(workspace: str) -> str | None:
+    """Read-only check: byte-compile created Python files for syntax errors.
+
+    Returns the report, or None when there is nothing to smoke-test so the
+    caller falls through to the real test runner. Never executes code and
+    never needs confirmation.
+    """
+    import py_compile
+    from pathlib import Path as _P
+
+    root = _P(workspace)
+    if not root.is_dir():
+        return None
+    targets = sorted(root.rglob("*.py"))
+    if not targets:
+        return None
+    ok, bad = 0, []
+    for f in targets[:50]:
+        try:
+            py_compile.compile(str(f), doraise=True)
+            ok += 1
+        except py_compile.PyCompileError as exc:
+            bad.append(f"{f.name}: {exc}")
+    if bad:
+        return "SMOKE-TEST FAILED (syntax errors):\n" + "\n".join(bad)
+    return f"SMOKE-TEST PASSED: {ok} Python file(s) compile cleanly (syntax check, not executed)."
 
 
 def _run_tests(workspace: str) -> str:

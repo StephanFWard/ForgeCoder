@@ -23,6 +23,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private readonly disposables: vscode.Disposable[] = [];
   private pendingPatch: PendingPatch | undefined;
   private pendingMultiPatch: { workspace: string; patches: FilePatch[]; creates: Record<string, string>; message: string } | undefined;
+  private currentPlan: { planId: string; steps: Array<{ title: string; action: string; done?: boolean }> } | undefined;
   private history: Array<{ role: string; content: string }> = [];
   private streaming = false;
   private planMode = false;
@@ -96,7 +97,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         break;
       case 'act':
         await this.runStep(String(msg.planId ?? ''), Number(msg.index ?? -1),
-                           msg.action === 'test' || msg.action === 'commit');
+                           msg.action === 'test' || msg.action === 'commit',
+                           Boolean(msg.confirmed));
+        break;
+      case 'actAll':
+        await this.runAllSteps(String(msg.planId ?? ''), Number(msg.count ?? 0));
         break;
       case 'togglePlanMode':
         this.togglePlanMode();
@@ -194,16 +199,39 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
     this.post('plan', { planId: res.plan_id, summary: res.summary, steps: res.steps,
                         fallback: res.fallback === true });
+    this.currentPlan = { planId: res.plan_id,
+                         steps: res.steps.map((s) => ({ title: s.title, action: s.action })) };
   }
 
-  private async runStep(planId: string, index: number, mutating: boolean): Promise<void> {
+  private async runAllSteps(planId: string, count: number): Promise<void> {
+    for (let i = 0; i < count; i++) {
+      const step = this.currentPlan?.steps[i];
+      if (!step || step.done) { continue; }
+      const mutating = step.action === 'test' || step.action === 'commit';
+      let confirmed = false;
+      if (mutating) {
+        const answer = await vscode.window.showWarningMessage(
+          `Plan step ${i + 1} (${step.action}) wants to ${step.action === 'commit' ? 'modify git state' : 'run code'}. Allow once?`,
+          { modal: true }, 'Allow once', 'Skip step',
+        );
+        if (answer !== 'Allow once') { continue; }
+        confirmed = true;
+      }
+      await this.runStep(planId, i, mutating, confirmed);
+      if (this.pendingMultiPatch) {
+        await this.confirmApplyMulti(true);
+      }
+    }
+  }
+
+  private async runStep(planId: string, index: number, mutating: boolean, confirmed = false): Promise<void> {
     if (index < 0) {
       return;
     }
     const workspace = currentWorkspace();
     this.reveal();
     this.post('stepStart', { index });
-    const res = await this.api.act(planId, index, workspace, mutating)
+    const res = await this.api.act(planId, index, workspace, mutating && !confirmed)
       .catch((err) => ({ ok: false, error: err instanceof Error ? err.message : String(err),
                          step_index: index, title: `Step ${index + 1}`, action: 'unknown',
                          output: '', next_index: null } as ActResponse));
@@ -212,21 +240,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       ok: res.ok === true,
       title: res.title ?? `Step ${index + 1}`,
       output: res.output ?? res.error ?? '',
-      hasPatch: Boolean(res.patch || res.multiPatch),
+      hasPatch: Boolean(res.patch || res.multiPatch || (res.creates && Object.keys(res.creates).length)),
     });
+    if (this.currentPlan?.steps[index]) { this.currentPlan.steps[index].done = true; }
     if (res.patch) {
       this.offerPatch(workspace ?? '', [res.patch]);
-    } else if (res.multiPatch && res.multiPatch.length) {
-      this.pendingMultiPatch = { workspace: workspace ?? '', patches: res.multiPatch.map((f) => ({
+    } else if ((res.multiPatch && res.multiPatch.length) || (res.creates && Object.keys(res.creates).length)) {
+      this.pendingMultiPatch = { workspace: workspace ?? '', patches: (res.multiPatch ?? []).map((f) => ({
         path: f.path,
         operations: f.operations ?? [],
       })), creates: res.creates ?? {}, message: '' };
       this.pendingPatch = undefined;
       this.reveal();
       const createdPaths = Object.keys(res.creates ?? {});
+      const editedPaths = (res.multiPatch ?? []).map((f) => f.path);
       this.post('pendingMultiPatch', {
-        count: res.multiPatch.length + createdPaths.length,
-        paths: res.multiPatch.map((f) => f.path).concat(createdPaths),
+        count: editedPaths.length + createdPaths.length,
+        paths: editedPaths.concat(createdPaths),
       });
     }
   }
@@ -357,14 +387,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this.post('cleared', {});
   }
 
-  private async confirmApply(): Promise<void> {
+  private async confirmApply(autoConfirmed = false): Promise<void> {
     const pending = this.pendingPatch;
     if (!pending) {
       void vscode.window.showWarningMessage('No pending patch — ask ForgeCoder for a fix first.');
       return;
     }
-    const allow = vscode.workspace.getConfiguration('forgecoder').get<boolean>('allowWriteFile', false);
-    if (!allow) {
+    const allowWrite = vscode.workspace.getConfiguration('forgecoder').get<boolean>('allowWriteFile', false);
+    if (!autoConfirmed && !allowWrite) {
       const answer = await vscode.window.showWarningMessage(
         `Apply changes to ${pending.patch.path}?`,
         { modal: true },
@@ -409,14 +439,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   /** Apply a multi-file patch set atomically (rollback on failure). */
-  private async confirmApplyMulti(): Promise<void> {
+  private async confirmApplyMulti(autoConfirmed = false): Promise<void> {
     const pending = this.pendingMultiPatch;
     if (!pending) {
       void vscode.window.showWarningMessage('No pending multi-file patch.');
       return;
     }
-    const allow = vscode.workspace.getConfiguration('forgecoder').get<boolean>('allowWriteFile', false);
-    if (!allow) {
+    const allowMulti = autoConfirmed ||
+      vscode.workspace.getConfiguration('forgecoder').get<boolean>('allowWriteFile', false);
+    if (!allowMulti) {
       const changed = pending.patches.filter((p) => p.operations.some((o) => o.type !== 'delete'));
       const created = Object.keys(pending.creates);
       const summary = [...changed.map((p) => p.path), ...created]

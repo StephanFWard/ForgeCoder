@@ -1,12 +1,13 @@
 # Grammar for structured plan output (llama.cpp / llama-server --grammar-file).
-# Constrains generation to the exact JSON shape expected by forge_server/plans.py.
+# Constrains generation to the exact JSON shape expected by forge_server/plans.py
+# (_PLAN_SCHEMA: {"summary": str, "steps": [{title, action, detail}]}).
 #
 # RNP inspiration (PMC10637337): hierarchical plan → recursive decomposition
 # of a goal into sub-steps.
 
 root     ::= object
 
-object   ::= "{" ws summary "," ws steps "," ws risks ws "}"
+object   ::= "{" ws summary "," ws steps ws "}"
 value    ::= object | array | string | number | "true" | "false" | "null"
 string   ::= "\"" ([^\"\\] | "\\" (["\\/] | "n" | "t" | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]))* "\""
 number   ::= "-" ? ([0-9] | [1-9] [0-9]*)
@@ -14,7 +15,6 @@ ws       ::= [ \t\n]*
 
 summary  ::= "\"" ws "summary" ws ":" ws string
 steps    ::= "\"" ws "steps" ws ":" ws step_array
-risks    ::= "\"" ws "risks" ws ":" ws risk_array
 
 step_array ::= "[" ws (step ("," ws step)*)? ws "]"
 step       ::= "{" ws (step_title "," ws step_detail "," ws step_action) ws "}"
@@ -22,5 +22,3 @@ step_title ::= "\"" ws "title" ws ":" ws string
 step_detail ::= "\"" ws "detail" ws ":" ws string
 step_action ::= "\"" ws "action" ws ":" ws step_kind
 step_kind  ::= "\"" ("search" | "explain" | "edit" | "test" | "commit") "\""
-
-risk_array ::= "[" ws (string ("," ws string)*)? ws "]"

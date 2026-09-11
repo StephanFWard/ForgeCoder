@@ -14,4 +14,7 @@ Rules:
 1. 2 to 6 steps. Smallest plan that achieves the goal.
 2. Prefer search -> explain -> edit -> test -> commit ordering when relevant.
 3. Never invent files or modules; only reference what exists in the context.
+   Exception: when the request asks to CREATE something new (a game, app,
+   script, or file), list the concrete files to create (one edit step per
+   file) instead of referencing existing code.
 4. If the request is a simple question, return a single "explain" step.

@@ -67,7 +67,17 @@
       box.appendChild(row);
       step._row = row;
       step._run = run;
+      step._index = i;
     });
+    const runAll = document.createElement('button');
+    runAll.className = 'step-run';
+    runAll.textContent = 'Run all';
+    runAll.addEventListener('click', function () {
+      runAll.disabled = true;
+      runAll.textContent = '…';
+      vscode.postMessage({ command: 'actAll', planId: plan.planId, count: plan.steps.length });
+    });
+    box.appendChild(runAll);
     messages.appendChild(box);
     messages.scrollTop = messages.scrollHeight;
   }
