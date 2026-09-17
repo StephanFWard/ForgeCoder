@@ -25,7 +25,7 @@ from core.patching.parser import (
     parse_patch,
 )
 from core.retrieval.budget import truncate_to_tokens
-from core.retrieval.context import load_prompt
+from core.retrieval.context import ContextBuilder, load_prompt
 from forge_server.main import AppState, get_state
 from forge_server.security import PERMISSIONS_AUTO, check_permission
 
@@ -336,6 +336,7 @@ async def act(req: ActRequest, confirm: str | None = Header(default=None, alias=
                 result["output"] = "No matches found."
 
         elif action == "explain":
+            context_text = ""
             if _is_creation_request(detail + " " + plan.get("request", "")):
                 files = _creation_files(plan.get("request", "") + " " + detail)
                 result["output"] = (
@@ -344,7 +345,9 @@ async def act(req: ActRequest, confirm: str | None = Header(default=None, alias=
                     "then smoke-tested before applying."
                 )
             else:
-                result["output"] = await _ask(state, req.workspace, detail, plan.get("results", {}))
+                result["output"], context_text = await _ask(
+                    state, req.workspace, detail, plan.get("results", {}),
+                )
             # RNP predictive verification: check the answer's citations against
             # the context that was actually supplied to the model.
             result["verification"] = verify_output(
@@ -444,8 +447,8 @@ async def act(req: ActRequest, confirm: str | None = Header(default=None, alias=
 
 
 async def _ask(state: AppState, workspace: str | None, question: str,
-               prior_results: dict) -> str:
-    """Non-streaming chat with retrieval context + prior step results."""
+               prior_results: dict) -> tuple[str, str]:
+    """Return the answer and the repository context supplied to the model."""
     builder = ContextBuilder(state.index)
     built = builder.build(question, workspace=workspace, budget=3072)
 
@@ -453,18 +456,19 @@ async def _ask(state: AppState, workspace: str | None, question: str,
         f"- {v.get('title', '?')}: {truncate_to_tokens(str(v.get('output', '')), 250)}"
         for v in prior_results.values() if isinstance(v, dict)
     )
-    context_text = "\n\n".join(s["text"] for s in built.sections)
+    context_text = truncate_to_tokens("\n\n".join(s["text"] for s in built.sections), 1800)
     user = question
     if context_text:
-        user += f"\n\nRepository context:\n{truncate_to_tokens(context_text, 1800)}"
+        user += f"\n\nRepository context:\n{context_text}"
     if prior:
         user += f"\n\nEarlier step results:\n{prior}"
 
-    return await state.inference.chat(
+    answer = await state.inference.chat(
         build_chat_messages(load_prompt("chat"), user, None),
         temperature=0.3, max_tokens=700,
         presence_penalty=0.2, frequency_penalty=0.2,
     )
+    return answer, context_text
 
 
 async def _edit_step(state: AppState, workspace: str | None, instruction: str,

@@ -25,6 +25,7 @@ class PatchPreviewRequest(BaseModel):
 class PatchApplyRequest(BaseModel):
     workspace: str
     patch: FilePatch
+    expected_original: str | None = None
 
 
 @router.post("/preview")
@@ -59,8 +60,12 @@ async def apply(req: PatchApplyRequest, confirm: str | None = Header(default=Non
         # The confirmation header IS the user's grant for this write.
         check_permission("WRITE_FILE", granted=PERMISSIONS_AUTO | {"WRITE_FILE"})
         path = resolve_workspace_path(req.workspace, req.patch.path)
+        if req.expected_original is not None:
+            current = path.read_text(encoding="utf-8")
+            if current != req.expected_original:
+                return {"ok": False, "error": "File changed since generation/preview; regenerate the edit."}
         result = apply_patch(path, req.patch)
-    except (ForgeSecurityError, PatchError) as exc:
+    except (ForgeSecurityError, PatchError, OSError, UnicodeError) as exc:
         return {"ok": False, "error": str(exc)}
     return {"ok": True, "applied": result.applied, "path": req.patch.path}
 

@@ -13,7 +13,8 @@ from fastapi import APIRouter, Depends
 from core.inference.chat import build_chat_messages
 from core.inference.client import InferenceError
 from core.patching.parser import PatchParseError, extract_json, parse_patch
-from core.retrieval.context import ContextBuilder, load_prompt
+from core.retrieval.budget import truncate_to_tokens
+from core.retrieval.context import ContextBuilder
 from forge_server.context import ContextRequest
 from forge_server.main import AppState, get_state
 
@@ -27,11 +28,14 @@ class ActionRequest(ContextRequest):
     instruction: str | None = None # e.g. "add null validation"
 
 
-def _behavior(behavior: str) -> str:
-    return load_prompt(behavior)
-
-
 async def _run(state: AppState, req: ActionRequest, behavior: str) -> str:
+    """One model call for a code action.
+
+    ``behavior`` selects the behavior-specific system prompt (chat/edit/fix/
+    test) via ContextBuilder, and the retrieved repository context is injected
+    into the user turn so the model can produce line numbers that refer to
+    real files instead of hallucinating them.
+    """
     builder = ContextBuilder(state.index)
     built = builder.build(
         req.message or req.instruction or "",
@@ -39,9 +43,17 @@ async def _run(state: AppState, req: ActionRequest, behavior: str) -> str:
         file=req.file,
         selection=req.selection.as_tuple() if req.selection else None,
         budget=state.config.max_chat_context,
+        behavior=behavior,
     )
-    target = req.code or built.request
-    user = f"{target}\n\n{req.error if req.error else ''}".strip()
+    parts = [req.message, req.instruction]
+    if req.code:
+        parts.append(f"Selected code:\n{req.code}")
+    if req.error:
+        parts.append(f"Error output:\n{req.error}")
+    user = "\n\n".join(part for part in parts if part)
+    context_text = "\n\n".join(s["text"] for s in built.sections)
+    if context_text:
+        user = f"{user}\n\nRepository context:\n{truncate_to_tokens(context_text, 2000)}"
     messages = build_chat_messages(built.system, user)
     return await state.inference.chat(messages, temperature=0.1, max_tokens=1024)
 

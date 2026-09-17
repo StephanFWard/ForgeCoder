@@ -128,6 +128,55 @@ export function registerCodeActions(
       }
     }),
 
+    vscode.commands.registerCommand('forgecoder.editAndApply', async () => {
+      try {
+        const editor = vscode.window.activeTextEditor;
+        const ctx = activeFileContext();
+        if (!vscode.workspace.isTrusted || !editor || !ctx.workspace || !ctx.file ||
+            editor.document.uri.scheme !== 'file' || editor.document.isDirty) {
+          void vscode.window.showWarningMessage('Open a saved file in a trusted workspace first.');
+          return;
+        }
+        const document = editor.document;
+        const version = document.version;
+        const original = document.getText().replace(/\r\n/g, '\n');
+        const instruction = await vscode.window.showInputBox({ prompt: 'What should ForgeCoder change in this file?' });
+        if (!instruction?.trim()) return;
+        const result = await api.edit(ctx.code, instruction, ctx.workspace, ctx.file, ctx.selection);
+        if (!result.ok || !result.patches?.length) {
+          void vscode.window.showWarningMessage(result.error ?? result.summary ?? 'No edit produced.');
+          return;
+        }
+        if (result.patches.length !== 1 || result.patches[0].path !== ctx.file) {
+          void vscode.window.showWarningMessage('Edit and Apply accepts only the active file. Use the patch preview workflow for other targets.');
+          return;
+        }
+        const patch = result.patches[0];
+        const preview = await api.patchPreview(ctx.workspace, patch);
+        if (!preview.ok || preview.original !== original) {
+          void vscode.window.showWarningMessage(preview.error ?? 'File changed; regenerate the edit.');
+          return;
+        }
+        if (!preview.changed) return;
+        showMarkdown('ForgeCoder: Proposed Edit', preview.diff ?? '');
+        const choice = await vscode.window.showWarningMessage(
+          `Apply the proposed edit to ${ctx.file}?`, { modal: true }, 'Apply',
+        );
+        if (choice !== 'Apply') return;
+        if (document.isClosed || document.isDirty || document.version !== version) {
+          void vscode.window.showWarningMessage('Editor changed; regenerate the edit.');
+          return;
+        }
+        const applied = await api.patchApply(ctx.workspace, patch, true, original);
+        if (!applied.ok) {
+          void vscode.window.showErrorMessage(applied.error ?? 'Apply failed.');
+          return;
+        }
+        void vscode.window.showInformationMessage(applied.applied ? `Updated ${ctx.file}.` : 'No changes needed.');
+      } catch (error) {
+        void vscode.window.showErrorMessage(`Edit and Apply failed: ${String(error)}`);
+      }
+    }),
     vscode.commands.registerCommand('forgecoder.applyPatch', async () => {
       if (!sidebar.hasPendingPatch()) {
         void vscode.window.showWarningMessage('No pending patch — ask ForgeCoder for a fix first.');

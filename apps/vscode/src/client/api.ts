@@ -189,13 +189,13 @@ export class ForgeApi {
     return this.client.json('/v1/patch/preview', { workspace, patch });
   }
 
-  patchApply(workspace: string, patch: FilePatch, confirmed: boolean): Promise<{ ok: boolean; error?: string; applied?: boolean }> {
+  patchApply(workspace: string, patch: FilePatch, confirmed: boolean, expectedOriginal?: string): Promise<{ ok: boolean; error?: string; applied?: boolean }> {
     if (!confirmed) {
       return Promise.resolve({ ok: false, error: 'Confirmation required before applying a file write.' });
     }
     return this.client.json(
       '/v1/patch/apply',
-      { workspace, patch },
+      { workspace, patch, expected_original: expectedOriginal },
       undefined,
       { 'X-Forge-Confirm': 'true' },
     );
@@ -206,9 +206,9 @@ export class ForgeApi {
     return this.client.json('/v1/fix', { code, error: errorText, workspace, file });
   }
 
-  edit(code: string, instruction?: string, workspace?: string, file?: string):
+  edit(code: string, instruction?: string, workspace?: string, file?: string, selection?: SelectionInfo):
     Promise<{ ok: boolean; error?: string; summary?: string; patches?: FilePatch[]; proposal?: string }> {
-    return this.client.json('/v1/edit', { code, instruction, workspace, file });
+    return this.client.json('/v1/edit', { code, instruction, workspace, file, selection });
   }
 
   explain(code: string, workspace?: string, file?: string): Promise<{ ok: boolean; error?: string; explanation?: string }> {

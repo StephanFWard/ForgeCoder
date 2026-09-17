@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from core.retrieval.budget import estimate_tokens, fit_to_budget, truncate_to_tokens
+from core.retrieval.budget import estimate_tokens
 from core.retrieval.search import SearchEngine
 
 _RUNTIME_PROMPTS = Path(__file__).resolve().parents[2] / "runtime" / "prompts"
@@ -70,24 +70,35 @@ class ContextBuilder:
         sections: list[dict] = []
         used = estimate_tokens(system) + estimate_tokens(message)
 
-        # 1. Retrieved repository context — batch-append chunks until the
-        #    budget is filled instead of stopping at a fixed count.
+        # Prefer fresh active-file evidence over potentially stale index chunks.
+        active_path = None
+        if file and workspace:
+            root = Path(workspace).resolve()
+            candidate = (root / file).resolve()
+            if candidate.is_relative_to(root):
+                active_path = candidate.relative_to(root).as_posix()
+                snippet = _selection_snippet(candidate, selection)
+                text = _fit_lines(f"### {active_path}\n{snippet}", min(1200, max(0, budget - used - 200))) if snippet else ""
+                if text:
+                    cost = estimate_tokens(text)
+                    sections.append({"type": "file", "tokens": cost, "text": text})
+                    used += cost
+
         if self.search_engine and message.strip():
             pool = self._retrieve(message, workspace=workspace)
-            fitted = fit_to_budget(pool, budget - used - 400, min_chunks=1)
-            if fitted:
-                text = _render_sections(fitted)
+            rendered = []
+            for chunk in pool:
+                # Do not contradict the current file with stale indexed copies.
+                if chunk["path"].replace("\\", "/") == active_path:
+                    continue
+                text = _fit_lines(_render_sections([chunk]), max(0, budget - used - 200))
+                if not text:
+                    continue
+                rendered.append(text)
+                used += estimate_tokens(text) + 1  # separator allowance
+            if rendered:
+                text = "\n\n".join(rendered)
                 sections.append({"type": "repository", "tokens": estimate_tokens(text), "text": text})
-                used += estimate_tokens(text)
-
-        # 2. Current file + selection
-        if file and workspace:
-            snippet = _selection_snippet(Path(workspace) / file, selection)
-            if snippet:
-                text = f"### {file}\n```\n{snippet}\n```"
-                text = truncate_to_tokens(text, max(budget - used - 200, 100))
-                sections.append({"type": "file", "tokens": estimate_tokens(text), "text": text})
-                used += estimate_tokens(text)
 
         return BuiltContext(system=system, request=message, sections=sections, total_tokens=used)
 
@@ -97,8 +108,8 @@ class ContextBuilder:
 
         SearchEngine already ranks candidates; we cap each chunk's size so one
         large file cannot monopolise the window, drop duplicates (same line
-        range or same content), and return everything — ``fit_to_budget`` then
-        appends as many as the remaining token budget allows.
+        range or same content). Whole-line fitting then appends as much
+        evidence as the remaining token budget allows.
         """
         results = self.search_engine.search(message, workspace=workspace, limit=max_chunks)
         pool: list[dict] = []
@@ -112,7 +123,7 @@ class ContextBuilder:
             seen_ranges.add(range_key)
             seen_content.add(content_key)
             pool.append({
-                "content": truncate_to_tokens(r.content, max_chunk_tokens),
+                "content": _fit_lines(r.content, max_chunk_tokens),
                 "path": r.path,
                 "start_line": r.start_line,
                 "end_line": r.end_line,
@@ -126,13 +137,22 @@ def _selection_snippet(path: Path, selection: tuple[int, int] | None) -> str:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return ""
+    start, end = (0, min(len(lines), 150))
     if selection:
-        start, end = selection
-        start = max(0, int(start) - 1)
-        end = min(len(lines), int(end) + 1) if end <= len(lines) else len(lines)
-        if 0 <= start < end:
-            return "\n".join(lines[start:end])
-    return "\n".join(lines[:150])
+        start = max(0, int(selection[0]) - 1)
+        end = min(len(lines), int(selection[1]))
+    return "\n".join(f"{i + 1}: {lines[i]}" for i in range(start, end))
+
+
+def _fit_lines(text: str, budget: int) -> str:
+    """Keep only whole lines within the estimated token limit; never force a chunk."""
+    kept: list[str] = []
+    for line in text.splitlines():
+        candidate = "\n".join([*kept, line])
+        if estimate_tokens(candidate) > max(0, budget):
+            break
+        kept.append(line)
+    return "\n".join(kept)
 
 
 def _render_sections(chunks: list[dict]) -> str:

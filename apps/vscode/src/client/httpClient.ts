@@ -19,7 +19,7 @@ export class HttpClient {
   }
 
   async json<T>(path: string, body?: unknown, signal?: AbortSignal, headers?: Record<string, string>): Promise<T> {
-    const resp = await this.fetch(path, body, signal);
+    const resp = await this.fetch(path, body, signal, headers);
     if (!resp.ok) {
       throw new HttpError(`${resp.status} ${resp.statusText}`, resp.status);
     }

@@ -80,6 +80,11 @@
         "title": "Explain Error"
       },
       {
+        "command": "forgecoder.editAndApply",
+        "category": "ForgeCoder",
+        "title": "Edit and Apply to Active File"
+      },
+      {
         "command": "forgecoder.applyPatch",
         "category": "ForgeCoder",
         "title": "Apply Patch"
