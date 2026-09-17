@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snake</title>
+<style>
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+         background: #101820; color: #e8f0f8; font-family: "Segoe UI", system-ui, sans-serif; }
+  .panel { background: #1b2735; border-radius: 12px; padding: 18px;
+           box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
+  h1 { margin: 0 0 10px; font-size: 20px; letter-spacing: 2px; text-transform: uppercase; }
+  .hud { display: flex; justify-content: space-between; margin-bottom: 10px;
+         font-variant-numeric: tabular-nums; }
+  .hud b { font-weight: 700; }
+  canvas { display: block; background: #0b1219; border-radius: 8px; }
+  #status { margin: 10px 0 0; text-align: center; min-height: 20px; font-weight: 600; }
+  #restart { border: 0; border-radius: 8px; background: #2f4159; color: #e8f0f8;
+             padding: 8px 14px; margin-top: 10px; width: 100%; cursor: pointer;
+             font: 600 13px "Segoe UI", system-ui, sans-serif; }
+  #restart:hover { background: #3c5370; }
+</style>
+</head>
+<body>
+<main class="panel">
+  <h1>Snake</h1>
+  <div class="hud">
+    <div>Score <b id="score">0</b></div>
+    <div>Best <b id="best">0</b></div>
+  </div>
+  <canvas id="board" width="400" height="400" aria-label="Snake board"></canvas>
+  <p id="status">Arrow keys or WASD to steer &middot; P to pause</p>
+  <button id="restart" type="button">New game</button>
+<script>
+"use strict";
+
+const CELLS = 20, CELL = 20, SPEED_START = 140, SPEED_MIN = 60;
+
+const canvas = document.getElementById("board");
+const ctx = canvas.getContext("2d");
+const scoreEl = document.getElementById("score");
+const bestEl = document.getElementById("best");
+const statusEl = document.getElementById("status");
+const restartBtn = document.getElementById("restart");
+
+let snake, direction, nextDirection, food;
+let score = 0, best = 0, speed = SPEED_START;
+let timerId = null, paused = false, gameOver = false;
+
+function reset() {
+  snake = [{ x: 10, y: 10 }, { x: 9, y: 10 }, { x: 8, y: 10 }];
+  direction = { x: 1, y: 0 };
+  nextDirection = direction;
+  score = 0;
+  speed = SPEED_START;
+  paused = false;
+  gameOver = false;
+  food = spawnFood();
+  scoreEl.textContent = "0";
+  statusEl.textContent = "Arrow keys or WASD to steer \u00B7 P to pause";
+  schedule();
+  draw();
+}
+
+function spawnFood() {
+  for (;;) {
+    const f = {
+      x: Math.floor(Math.random() * CELLS),
+      y: Math.floor(Math.random() * CELLS),
+    };
+    if (!snake.some((s) => s.x === f.x && s.y === f.y)) return f;
+  }
+}
+
+function schedule() {
+  if (timerId) clearInterval(timerId);
+  timerId = setInterval(tick, speed);
+}
+
+function tick() {
+  if (paused || gameOver) return;
+  direction = nextDirection;
+  const head = { x: snake[0].x + direction.x, y: snake[0].y + direction.y };
+  const hitWall = head.x < 0 || head.y < 0 || head.x >= CELLS || head.y >= CELLS;
+  const hitSelf = snake.some((s) => s.x === head.x && s.y === head.y);
+  if (hitWall || hitSelf) { endGame(); return; }
+  snake.unshift(head);
+  if (head.x === food.x && head.y === food.y) {
+    score++;
+    scoreEl.textContent = String(score);
+    if (score > best) { best = score; bestEl.textContent = String(best); }
+    speed = Math.max(SPEED_MIN, speed - 6);
+    schedule();
+    food = spawnFood();
+  } else {
+    snake.pop();
+  }
+  draw();
+}
+
+function endGame() {
+  gameOver = true;
+  if (timerId) { clearInterval(timerId); timerId = null; }
+  statusEl.textContent = "Game over — score " + score + ". Press New game.";
+  draw();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#e2543e";
+  ctx.beginPath();
+  ctx.arc(food.x * CELL + CELL / 2, food.y * CELL + CELL / 2, CELL / 2 - 3, 0, Math.PI * 2);
+  ctx.fill();
+  for (let i = 0; i < snake.length; i++) {
+    ctx.fillStyle = i === 0 ? "#7bd88f" : "#5aa86f";
+    ctx.fillRect(snake[i].x * CELL + 1, snake[i].y * CELL + 1, CELL - 2, CELL - 2);
+  }
+  if (gameOver) {
+    ctx.fillStyle = "rgba(16, 24, 32, 0.6)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#e8f0f8";
+    ctx.font = "700 28px 'Segoe UI', system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("Game over", canvas.width / 2, canvas.height / 2);
+  }
+}
+
+const KEY_DIRS = {
+  ArrowUp: { x: 0, y: -1 }, KeyW: { x: 0, y: -1 },
+  ArrowDown: { x: 0, y: 1 }, KeyS: { x: 0, y: 1 },
+  ArrowLeft: { x: -1, y: 0 }, KeyA: { x: -1, y: 0 },
+  ArrowRight: { x: 1, y: 0 }, KeyD: { x: 1, y: 0 },
+};
+
+document.addEventListener("keydown", (ev) => {
+  if (ev.code === "KeyP") { paused = !paused; return; }
+  const dir = KEY_DIRS[ev.code];
+  if (!dir) return;
+  ev.preventDefault();
+  // No 180-degree turns: the new direction cannot reverse into the neck.
+  if (dir.x !== -direction.x || dir.y !== -direction.y) nextDirection = dir;
+});
+
+restartBtn.addEventListener("click", reset);
+reset();
+</script>
+</body>
+</html>

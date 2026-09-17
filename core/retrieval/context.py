@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from core.agent.creation import creation_targets, is_creation_request
 from core.agent.frame import TaskFrame, build_frame
 from core.agent.prompt import render_task_frame, system_prompt
 from core.agent.scope import ScopeContract, build_contract
@@ -132,13 +133,22 @@ class ContextBuilder:
 
         # Frames and contracts are derived from supplied sources only: a fact
         # enters the frame when its path/lines were really sent, and the scope
-        # contract bounds edits to what the model has actually seen.
+        # contract bounds edits to what the model has actually seen. A creation
+        # request ("make the game snake in html") with no active editor file is
+        # bounded to the files it will create instead of being interrogated
+        # with "which file?" — asking is what made it reply with ask-dont-guess
+        # warnings instead of a game.
+        creation: list[str] | None = None
+        if active_path is None and is_creation_request(message):
+            creation = creation_targets(message)
         contract = build_contract(
             message, file=active_path, evidence_paths=[c["path"] for c in supplied],
+            creation_targets=creation,
         )
         frame = build_frame(
             message, file=active_path, selection=selection,
             evidence=supplied, contract=contract, file_lines=file_lines,
+            creation_targets=creation,
         )
         request = message
         frame_text = render_task_frame(frame)

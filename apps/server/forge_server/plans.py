@@ -9,12 +9,16 @@ normal confirmation flow.
 from __future__ import annotations
 
 import asyncio
-import re
 import uuid
 
 from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel
 
+from core.agent.creation import (
+    creation_targets,
+    is_creation_request,
+    single_creation_target,
+)
 from core.inference.chat import build_chat_messages
 from core.inference.verify import verify_output
 from core.patching.parser import (
@@ -163,7 +167,7 @@ def _fallback_plan(message: str) -> dict:
             })
         steps.append({
             "title": "Smoke-test created files", "action": "test",
-            "detail": "Byte-compile every created Python file (syntax check, no side effects)",
+            "detail": "Smoke-check every created file (Python byte-compile, HTML structure), no side effects",
         })
         return {"summary": message[:80], "steps": steps}
     return {
@@ -176,22 +180,11 @@ def _fallback_plan(message: str) -> dict:
 
 
 def _creation_files(message: str) -> list:
-    """Filenames a creation request most likely needs, cheapest heuristic first."""
-    text = message.lower()
-    m = re.search(r"([\w.-]+\.(py|html|js|ts|java|go|rs|cs|cpp|sql))", text)
-    if m:
-        named = m.group(1)
-        return [named, "README.md"] if named != "README.md" else [named]
-    if "fps" in text or "first person" in text or "shooter" in text:
-        return ["game.py", "requirements.txt", "README.md"]
-    if "api" in text or "endpoint" in text or "server" in text:
-        return ["app.py", "requirements.txt", "README.md"]
-    if "html" in text or "web" in text or "tic" in text or "browser" in text:
-        return ["index.html", "README.md"]
-    return ["main.py", "README.md"]
+    """Filenames a creation request most likely needs (see core.agent.creation)."""
+    return creation_targets(message)
 
 
-_CREATION_RE = None  # compiled lazily; pattern lives in _is_creation_request
+_CREATION_RE = None  # detection moved to core.agent.creation (single source of truth)
 
 
 def _is_creation_request(instruction: str) -> bool:
@@ -201,32 +194,15 @@ def _is_creation_request(instruction: str) -> bool:
     model cannot "edit" a file it was never shown, so generation (creates)
     is the only applicable behavior.
     """
-    global _CREATION_RE
-    if _CREATION_RE is None:
-        _CREATION_RE = re.compile(
-            r"\b(create|write|generate|build|make|scaffold|bootstrap)\b"
-            r"[^.\n]{0,60}\b(file|page|html|script|module|component|class|"
-            r"app|game|repository|repo|project|site|api|endpoint|test)\b"
-            r"|\bgame\b|\bapp\b|\bscript\b|\bprogram\b|\btic\b|\bfps\b"
-            r"|\bshooter\b|\bfirst\s+person\b|\brepository\b|\bproject\b"
-            r"|\bfrom\s+scratch\b|\bnew\s+(file|app|game|script|program|project|repo)\b",
-            re.IGNORECASE,
-        )
-    return bool(_CREATION_RE.search(instruction))
+    return is_creation_request(instruction)
 
 
-_SINGLE_FILE_RE = re.compile(r"Create file:\s*([\w][\w.\-/]*[A-Za-z0-9])", re.IGNORECASE)
+_SINGLE_FILE_RE = None  # moved to core.agent.creation
 
 
 def _single_creation_target(instruction: str, plan_request: str) -> str | None:
     """The one file this edit step must create (per-file plan steps)."""
-    m = _SINGLE_FILE_RE.search(instruction or "")
-    if m:
-        return m.group(1).strip().strip("'\"").lstrip("./")
-    m = _SINGLE_FILE_RE.search(plan_request or "")
-    if m:
-        return m.group(1).strip().strip("'\"").lstrip("./")
-    return None
+    return single_creation_target(instruction, plan_request)
 
 
 def _multi_to_act(multi: MultiPatch) -> dict:
@@ -612,11 +588,13 @@ async def _edit_step(state: AppState, workspace: str | None, instruction: str,
 
 
 def _syntax_smoke_check(workspace: str) -> str | None:
-    """Read-only check: byte-compile created Python files for syntax errors.
+    """Read-only check that created files are syntactically sane.
 
-    Returns the report, or None when there is nothing to smoke-test so the
-    caller falls through to the real test runner. Never executes code and
-    never needs confirmation.
+    Python files are byte-compiled, HTML pages get a structure check
+    (doctype/html present, no placeholder stubs, balanced script tags), and
+    every other file type is counted. Returns the report, or None when there
+    is nothing to smoke-test so the caller falls through to the real test
+    runner. Never executes code and never needs confirmation.
     """
     import py_compile
     from pathlib import Path as _P
@@ -624,19 +602,48 @@ def _syntax_smoke_check(workspace: str) -> str | None:
     root = _P(workspace)
     if not root.is_dir():
         return None
-    targets = sorted(root.rglob("*.py"))
-    if not targets:
+    py_files = sorted(root.rglob("*.py"))
+    html_files = sorted(root.rglob("*.html"))
+    if not py_files and not html_files:
         return None
     ok, bad = 0, []
-    for f in targets[:50]:
+    for f in py_files[:50]:
         try:
             py_compile.compile(str(f), doraise=True)
             ok += 1
         except py_compile.PyCompileError as exc:
             bad.append(f"{f.name}: {exc}")
+    html_ok = 0
+    for f in html_files[:50]:
+        problem = _html_smoke_problem(f)
+        if problem:
+            bad.append(f"{f.name}: {problem}")
+        else:
+            html_ok += 1
     if bad:
         return "SMOKE-TEST FAILED (syntax errors):\n" + "\n".join(bad)
-    return f"SMOKE-TEST PASSED: {ok} Python file(s) compile cleanly (syntax check, not executed)."
+    parts = []
+    if ok:
+        parts.append(f"{ok} Python file(s) compile cleanly")
+    if html_ok:
+        parts.append(f"{html_ok} HTML file(s) pass structure checks")
+    return f"SMOKE-TEST PASSED: {' and '.join(parts)} (syntax check, not executed)."
+
+
+def _html_smoke_problem(path) -> str | None:
+    """Structural smoke check for one created HTML page (no model, no writes)."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return f"unreadable: {exc}"
+    lowered = text.lower()
+    if "<html" not in lowered and "<!doctype" not in lowered:
+        return "no <html> document structure found"
+    if _looks_placeholder(text):
+        return "content looks like a stub/placeholder"
+    if lowered.count("<script") != lowered.count("</script>"):
+        return "unbalanced <script> tags"
+    return None
 
 
 def _run_tests(workspace: str) -> str:

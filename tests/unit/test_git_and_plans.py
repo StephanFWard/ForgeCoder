@@ -295,6 +295,51 @@ def test_parse_creation_rejects_existing_file_and_foreign_patches():
     assert multi.creates == {"index.html": "<!doctype html><html>... complete game ...</html>"}
 
 
+def test_smoke_check_accepts_real_html(tmp_path):
+    """The plan's test step is the acceptance evidence for creation requests:
+    it must actually validate an HTML page, not just Python files."""
+    from apps.server.forge_server.plans import _syntax_smoke_check
+
+    (tmp_path / "index.html").write_text(
+        "<!doctype html><html><body><h1>Snake</h1>"
+        "<script>const x = 1;</script></body></html>",
+        encoding="utf-8",
+    )
+    report = _syntax_smoke_check(str(tmp_path))
+    assert report is not None
+    assert report.startswith("SMOKE-TEST PASSED")
+    assert "HTML file(s) pass structure checks" in report
+
+
+def test_smoke_check_rejects_placeholder_html(tmp_path):
+    from apps.server.forge_server.plans import _syntax_smoke_check
+
+    (tmp_path / "bad.html").write_text("TODO: complete code here", encoding="utf-8")
+    report = _syntax_smoke_check(str(tmp_path))
+    assert report is not None
+    assert "SMOKE-TEST FAILED" in report
+    assert "bad.html" in report
+
+
+def test_smoke_check_rejects_html_without_structure(tmp_path):
+    from apps.server.forge_server.plans import _syntax_smoke_check
+
+    (tmp_path / "broken.html").write_text(
+        "just some notes, <script>unbalanced",
+        encoding="utf-8",
+    )
+    report = _syntax_smoke_check(str(tmp_path))
+    assert "SMOKE-TEST FAILED" in report
+    assert "no <html> document structure" in report
+
+
+def test_smoke_check_none_without_smokable_files(tmp_path):
+    from apps.server.forge_server.plans import _syntax_smoke_check
+
+    (tmp_path / "notes.txt").write_text("nothing smokable", encoding="utf-8")
+    assert _syntax_smoke_check(str(tmp_path)) is None
+
+
 def test_plan_store_roundtrip():
     from apps.server.forge_server.plans import PlanStore
 

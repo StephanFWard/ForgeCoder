@@ -88,13 +88,24 @@ def _receipts(file: str | None, selection: tuple[int, int] | None,
 
 def _unknowns(*, file: str | None, selection: tuple[int, int] | None,
               evidence, error: str | None, acceptance: list[str],
-              facts: list[str]) -> list[str]:
-    """The gaps this frame can see in itself. Ordered by how much they block."""
+              facts: list[str],
+              creation_targets: list[str] | tuple[str, ...] | None = None) -> list[str]:
+    """The gaps this frame can see in itself. Ordered by how much they block.
+
+    A creation request already answers its own questions: the files to create
+    are derived (``creation_targets``), and its acceptance is the smoke check,
+    not a named command — so neither "which file?" nor "name the command" is
+    an unknown. Asking them is what once made "make the game snake in html"
+    come back as ``[warn] ask-dont-guess`` instead of a game.
+    """
     open_questions: list[str] = []
-    if not facts:
+    if not facts and not creation_targets:
         open_questions.append("no repository evidence matched this request; name the file to inspect")
     if not file:
-        open_questions.append("which file should the change land in?")
+        if creation_targets:
+            pass  # the files to create ARE the answer; asking would invite a guess
+        else:
+            open_questions.append("which file should the change land in?")
     elif not selection:
         open_questions.append("which lines of the supplied file should change?")
     if acceptance and acceptance[0] == NO_ACCEPTANCE:
@@ -110,12 +121,15 @@ def build_frame(goal: str, *, file: str | None = None,
                 instruction: str | None = None,
                 error: str | None = None,
                 contract: ScopeContract | None = None,
-                file_lines: dict[str, int] | None = None) -> TaskFrame:
+                file_lines: dict[str, int] | None = None,
+                creation_targets: list[str] | tuple[str, ...] | None = None) -> TaskFrame:
     """Derive the task frame for one request from what was actually supplied.
 
     ``evidence`` is the retrieved context that went into the prompt (the same
     dicts the context builder rendered), so every fact carries a real
-    ``path:start-end`` receipt and a reviewer can check it.
+    ``path:start-end`` receipt and a reviewer can check it. For creation
+    requests (``creation_targets``), the frame bounds the task to the files it
+    will create and stays ready even with no repository evidence.
     """
     clean_goal = _clean(goal) or _clean(instruction)
     facts = _receipts(file, selection, evidence, file_lines)
@@ -123,9 +137,11 @@ def build_frame(goal: str, *, file: str | None = None,
         clean_goal or (instruction or ""), file=file,
         evidence_paths=[str(e.get("path")) for e in evidence if isinstance(e, dict)],
         instruction=instruction, error=error,
+        creation_targets=creation_targets,
     )
     unknowns = _unknowns(file=file, selection=selection, evidence=evidence,
-                         error=error, acceptance=scope.acceptance_criteria, facts=facts)
+                         error=error, acceptance=scope.acceptance_criteria, facts=facts,
+                         creation_targets=creation_targets)
     return TaskFrame(
         goal=clean_goal or "unspecified",
         facts=facts,
@@ -133,7 +149,7 @@ def build_frame(goal: str, *, file: str | None = None,
         forbidden=list(scope.forbidden_files),
         acceptance=list(scope.acceptance_criteria),
         unknowns=unknowns,
-        ready=bool(facts),
+        ready=bool(facts) or bool(creation_targets),
     )
 
 

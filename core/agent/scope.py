@@ -64,6 +64,18 @@ _ACCEPTANCE_PATTERNS: tuple[tuple[str, str], ...] = (
 
 NO_ACCEPTANCE = "no acceptance command was stated; name the command that proves this change"
 
+
+def creation_acceptance(creation_targets: list[str] | tuple[str, ...]) -> str:
+    """Acceptance evidence for a creation request: the files must really exist.
+
+    A browser game has no pytest/npm command to name; demanding one only
+    teaches the model to ask instead of create. The proof for generated files
+    is the deterministic Forge smoke check (Python byte-compile, HTML
+    structure) run on the files it created.
+    """
+    return ("the created files (" + ", ".join(creation_targets) + ") are complete, "
+            "non-placeholder, and pass the Forge smoke check")
+
 DEFAULT_ROLLBACK = (
     "Revert the file with `git checkout -- <path>`; ForgeCoder previews before writing and never commits."
 )
@@ -166,21 +178,36 @@ def acceptance_commands(*texts: str | None) -> list[str]:
 def build_contract(goal: str, *, file: str | None = None,
                    evidence_paths: list[str] | tuple[str, ...] = (),
                    instruction: str | None = None,
-                   error: str | None = None) -> ScopeContract:
+                   error: str | None = None,
+                   creation_targets: list[str] | tuple[str, ...] | None = None) -> ScopeContract:
     """Derive the scope contract for one request.
 
     The target file — when the editor supplied one — is the whole allowed set: a
     request that names a file is a request to change *that* file. Without a
     file the contract falls back to the retrieved evidence, bounded and
     deduplicated, because those are the only paths the model has seen.
+
+    For a **creation request** (``creation_targets`` supplied, e.g. the files a
+    "make the game snake in html" request will generate) the allowed set is the
+    files to be created — the retrieved evidence is not the target — and the
+    acceptance evidence is a smoke check of the created files instead of the
+    "no acceptance command was stated" placeholder, which would push the model
+    to ask permission for a task that already answers its own questions.
     """
     clean_goal = " ".join((goal or "").split())[:300]
     if file:
         allowed = [file.replace("\\", "/")]
+    elif creation_targets:
+        allowed = [str(t).replace("\\", "/") for t in creation_targets][:8]
     else:
         allowed = sorted({p.replace("\\", "/") for p in evidence_paths if p})[:8]
 
-    acceptance = acceptance_commands(clean_goal, instruction, error) or [NO_ACCEPTANCE]
+    acceptance = acceptance_commands(clean_goal, instruction, error)
+    if not acceptance:
+        if creation_targets:
+            acceptance = [creation_acceptance(creation_targets)]
+        else:
+            acceptance = [NO_ACCEPTANCE]
 
     approvals = ["WRITE_FILE requires an explicit confirmation and a diff preview"]
     haystack = " ".join(filter(None, (clean_goal, instruction, error))).lower()

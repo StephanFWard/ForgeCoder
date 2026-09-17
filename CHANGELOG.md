@@ -6,6 +6,29 @@ adheres to **0.x** versioning until 1.0.
 
 ## [Unreleased]
 
+### Fixed — creation requests are no longer interrogated as edits
+
+- Task frames and scope contracts are now creation-aware
+  (`core/agent/creation.py`, `core/agent/frame.py`, `core/agent/scope.py`,
+  `core/retrieval/context.py`). A request like "make the game snake in html"
+  used to get two edit-oriented unknowns — "which file should the change land
+  in?" and "no acceptance command was stated; name the command that proves the
+  change" — injected into its prompt, and the model answered with
+  ``[warn] ask-dont-guess`` instead of a game. Now the frame bounds the task
+  to the derived files to create (`index.html`, `README.md`), the acceptance
+  evidence is the Forge smoke check of those files, and the unknowns list
+  stays empty. Edit requests keep their unknowns unchanged.
+- `plans.py` creation heuristics (`_is_creation_request`, `_creation_files`,
+  `_single_creation_target`) now delegate to `core.agent.creation` — one
+  source of truth shared with the frame layer instead of two drifting regexes.
+- The plan smoke-test step now validates HTML pages (doctype/html structure,
+  no placeholder stubs, balanced script tags) in addition to byte-compiling
+  Python, so a browser-game creation has real acceptance evidence.
+- Golden creation fixture `tests/fixtures/snake/index.html` — a complete,
+  playable snake page (canvas, arrow/WASD controls, food, score, speed-up,
+  pause, game over) — plus LoRA seed records
+  (`training/datasets/creation/snake.jsonl`).
+
 ### Fixed — creation requests never degrade into existing-file patches
 
 - `POST /v1/plan` + `/act` edit steps: a creation request ("make a minesweeper
