@@ -242,6 +242,59 @@ def test_is_creation_request_variants():
     assert not _is_creation_request("find the auth bug in login.py")
 
 
+def test_minesweeper_request_routes_to_creation():
+    """Regression: "Make a minesweeper webpage game" once produced a bogus
+    README.md line-patch instead of creating the game files. The request must
+    route to the creation pipeline and plan per-file creation."""
+    from apps.server.forge_server.plans import _creation_files, _fallback_plan, _is_creation_request
+
+    request = "Make a minesweeper webpage game"
+    assert _is_creation_request(request)
+    assert _creation_files(request) == ["index.html", "README.md"]
+
+    plan = _fallback_plan(request)
+    actions = [s["action"] for s in plan["steps"]]
+    assert "edit" in actions and "test" in actions
+    # index.html must be CREATED. README.md may be created alongside (that is
+    # the documented per-file plan) — but every edit step is a *creation*
+    # step, never a modification of an existing file.
+    assert "Create index.html" in [s["title"] for s in plan["steps"]]
+    for s in plan["steps"]:
+        if s["action"] == "edit":
+            assert s["title"].startswith("Create "), s
+            assert s["detail"].startswith("Create file: "), s
+
+
+def test_parse_creation_rejects_existing_file_and_foreign_patches():
+    """A creation step may only be satisfied by ``creates`` output: an
+    existing-file patch (or the undocumented oldLine/newLine dialect from the
+    bad minesweeper transcript) is not a creation answer and must return None
+    so the caller retries with a corrective instruction."""
+    from apps.server.forge_server.plans import _parse_creation
+
+    bad_dialect = json.dumps({
+        "files": ["README.md"],
+        "patch": {"diff": [{"oldLine": "123", "newLine": "124", "content": "..."}]},
+    })
+    assert _parse_creation(bad_dialect) is None
+
+    files_only = json.dumps({
+        "summary": "edit",
+        "files": [{"path": "README.md", "operations": [
+            {"type": "replace", "start_line": 1, "end_line": 2, "content": "x"},
+        ]}],
+    })
+    assert _parse_creation(files_only) is None
+
+    good = json.dumps({
+        "message": "Created minesweeper",
+        "creates": {"index.html": "<!doctype html><html>... complete game ...</html>"},
+    })
+    multi = _parse_creation(good)
+    assert multi is not None
+    assert multi.creates == {"index.html": "<!doctype html><html>... complete game ...</html>"}
+
+
 def test_plan_store_roundtrip():
     from apps.server.forge_server.plans import PlanStore
 

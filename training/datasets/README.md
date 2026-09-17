@@ -11,7 +11,8 @@ training/datasets/
 ├── completion/     prefix/suffix/target                    (ForgeComplete)
 ├── debugging/      error → logs → diagnosis → fix
 ├── architecture/   class/file → architecture explanation
-└── security/       vulnerable code → hardened reponse
+├── security/       vulnerable code → hardened reponse
+└── creation/       instruction → {"message", "creates"} whole-file output (ForgeCreate)
 ```
 
 Records are JSON objects or JSONL lines. Run:

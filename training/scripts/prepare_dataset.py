@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 
 BEHAVIORS = ("chat", "bugfix", "editing", "testing", "completion",
-             "debugging", "architecture", "security")
+             "debugging", "architecture", "security", "creation")
 
 
 def _read_records(path: Path) -> list[dict]:
@@ -45,6 +45,23 @@ def _read_records(path: Path) -> list[dict]:
 
 def normalize(rec: dict, *, behavior: str, source: str) -> dict | None:
     """Map a raw record onto the unified schema, or None if unusable."""
+    if "creates" in rec:
+        # ForgeCreate: whole-file generation. The model must learn the exact
+        # {"message", "creates"} shape the create grammar constrains, so
+        # "make a game" answers with complete new files instead of a patch
+        # against an existing one.
+        output = json.dumps(
+            {"message": rec.get("message", ""), "creates": rec["creates"]},
+            ensure_ascii=False,
+        )
+        return {
+            "instruction": rec.get("instruction") or "",
+            "input": "",
+            "output": output,
+            "behavior": behavior,
+            "language": rec.get("language"),
+            "source": source,
+        }
     if "prefix" in rec and "target" in rec:
         output = rec["target"]
         instruction = rec.get("instruction")

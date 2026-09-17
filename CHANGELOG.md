@@ -6,6 +6,33 @@ adheres to **0.x** versioning until 1.0.
 
 ## [Unreleased]
 
+### Fixed — creation requests never degrade into existing-file patches
+
+- `POST /v1/plan` + `/act` edit steps: a creation request ("make a minesweeper
+  webpage game") is now answered **only** by new-file `creates` output
+  (`_parse_creation` in `apps/server/forge_server/plans.py`). The old fallback
+  to the existing-file patch shape once turned that request into a bogus
+  line-patch against `README.md` in an undocumented `oldLine`/`newLine` diff
+  dialect. Unparseable or wrong-shape replies get one corrective retry with
+  explicit instructions, then fail cleanly.
+- `core/patching/parser.py` rejects foreign patch dialects (`oldLine`/
+  `newLine`, `patch`/`diff`/`hunks` keys, unknown operation keys) with an
+  error that names the expected contract, instead of a generic "needs a
+  'path'" message.
+
+### Added
+
+- Golden creation fixture `tests/fixtures/minesweeper/index.html` — a
+  complete, self-contained, playable minesweeper page (reveal, flag, flood
+  fill, first-click safety, timer, win/lose). Serves as the evaluation-tier-2
+  golden artifact for creation tasks and as the source for the LoRA seed
+  records.
+- `creation` training behavior (`training/datasets/creation/`,
+  ForgeCreate): records shaped as `{"instruction", "message", "creates"}`
+  teach the LoRA to answer whole-file generation requests with the exact
+  `{"message", "creates"}` shape the create grammar constrains.
+  `prepare_dataset.py` normalizes these records.
+
 ### Added — Phase 1 (Runtime)
 
 - Repository scaffold: `pyproject.toml`, `apps/server` (FastAPI Forge server),

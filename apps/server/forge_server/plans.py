@@ -239,6 +239,25 @@ def _multi_to_act(multi: MultiPatch) -> dict:
     }
 
 
+def _parse_creation(raw: str) -> MultiPatch | None:
+    """Parse model output for a *creation* step.
+
+    A creation request ("make a minesweeper webpage game") may only be
+    satisfied by new files (``creates``). Falling back to an existing-file
+    patch here is how a creation request once came back as a spurious
+    line-patch against ``README.md`` — the file the retrieval context happened
+    to surface. Returns ``None`` when the reply contains no creations, which
+    the caller turns into a corrective retry.
+    """
+    try:
+        multi = parse_multi(raw)
+    except PatchParseError:
+        return None
+    if not multi.creates:
+        return None
+    return multi
+
+
 _PLACEHOLDER_RE = None  # compiled lazily
 
 
@@ -541,6 +560,31 @@ async def _edit_step(state: AppState, workspace: str | None, instruction: str,
         build_chat_messages(load_prompt("edit"), user, None),
         temperature=0.1, max_tokens=max_tokens, schema=schema,
     )
+
+    if creation:
+        # A creation request is answered ONLY with new files. Never fall back
+        # to the existing-file patch shape: that fallback once turned "make a
+        # minesweeper game" into a bogus edit of README.md (an undocumented
+        # oldLine/newLine dialect, no less).
+        multi = _parse_creation(raw)
+        if multi is None:
+            retry_user = (
+                f"{user}\n\nYour previous reply was rejected: it contained no "
+                f"\"creates\" object (it was an edit to an existing file, an "
+                f"unsupported diff format, or unparseable output). Try again. "
+                f"Respond ONLY with JSON of the shape {{\"message\": \"...\", "
+                f"\"creates\": {{\"FILENAME\": \"complete file content\"}}}}. "
+                f"Never modify existing files such as README.md; create the "
+                f"requested file(s) from scratch."
+            )
+            raw = await state.inference.chat(
+                build_chat_messages(load_prompt("edit"), retry_user, None),
+                temperature=0.1, max_tokens=max_tokens, schema=schema,
+            )
+            multi = _parse_creation(raw)
+        if multi is None:
+            return None
+        return {"kind": "multi", **_multi_to_act(multi)}
 
     try:
         multi = parse_multi(raw)

@@ -60,6 +60,56 @@ class FilePatch:
 
 _VALID_TYPES = {"insert", "replace", "delete"}
 
+# Keys the operation contract permits. Anything else inside an operation object
+# means the model emitted a patch dialect this parser does not implement.
+_OPERATION_KEYS = {"type", "start_line", "end_line", "content"}
+
+# Top-level keys that belong to other (undocumented) patch dialects.
+_FOREIGN_TOP_KEYS = {"patch", "diff", "hunks", "changes", "edits"}
+
+# Keys that may appear anywhere in the payload and mark a foreign dialect.
+_FOREIGN_ANY_KEYS = {"oldLine", "newLine", "old_string", "new_string"}
+
+
+def _foreign_keys(value: object, top_level: bool = True) -> set[str]:
+    """Collect keys marking an unsupported patch dialect, at any depth."""
+    foreign: set[str] = set()
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if (key in _FOREIGN_TOP_KEYS if top_level else False) or (
+                key in _FOREIGN_ANY_KEYS
+            ):
+                foreign.add(str(key))
+            foreign |= _foreign_keys(item, top_level=False)
+    elif isinstance(value, list):
+        for item in value:
+            foreign |= _foreign_keys(item, top_level=False)
+    return foreign
+
+
+def _reject_foreign_dialect(payload: dict) -> None:
+    """Fail loudly when the payload is not the documented patch format.
+
+    Small models sometimes emit plausible-looking diff formats they have seen
+    elsewhere (oldLine/newLine pairs, unified-diff hunks, search/replace
+    blocks). Silently ignoring them would turn a rejection into a corrupted
+    edit, and the generic "Each file patch needs a 'path'" error would not
+    tell the retry loop (or the user) what actually went wrong.
+    """
+    foreign = _foreign_keys(payload)
+    for raw in payload.get("files") or []:
+        if not isinstance(raw, dict):
+            continue
+        for op in raw.get("operations") or []:
+            if isinstance(op, dict):
+                foreign |= set(op) - _OPERATION_KEYS
+    if foreign:
+        raise PatchParseError(
+            "Unsupported patch dialect (keys: " + ", ".join(sorted(foreign)) + "). "
+            "Expected files -> operations with type/start_line/end_line/content, "
+            'or {"message", "creates"} for new files.'
+        )
+
 
 @dataclass
 class MultiPatch:
@@ -106,6 +156,8 @@ def parse_patch(payload: dict | str) -> list[FilePatch]:
 
     if not isinstance(payload, dict):
         raise PatchParseError("Patch payload must be an object")
+
+    _reject_foreign_dialect(payload)
 
     raw_files = payload.get("files")
     if isinstance(raw_files, dict):  # tolerate single file at top level

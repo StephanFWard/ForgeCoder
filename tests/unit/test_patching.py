@@ -54,6 +54,33 @@ def test_parse_patch_rejects_bad_line():
         parse_patch({"files": [{"path": "a.py", "operations": [{"type": "replace", "start_line": 0}]}]})
 
 
+def test_parse_patch_rejects_foreign_dialect():
+    """Regression: a "make a minesweeper webpage game" request once came back
+    as a README.md edit in an undocumented {files:[name], patch:{diff:
+    [{oldLine,newLine,content}]}} dialect. It must be rejected with an error
+    that names the expected contract, not silently tolerated or mis-parsed.
+    """
+    import json
+
+    text = json.dumps({
+        "files": ["README.md"],
+        "patch": {"diff": [
+            {"oldLine": "123", "newLine": "124", "content": "## Why this design"},
+        ]},
+    })
+    with pytest.raises(PatchParseError, match="oldLine"):
+        parse_patch(text)
+
+
+def test_parse_patch_rejects_unknown_operation_keys():
+    """Unknown keys inside operations mean a foreign dialect slipped in."""
+    with pytest.raises(PatchParseError, match="oldLine"):
+        parse_patch({"files": [{"path": "a.py", "operations": [
+            {"type": "replace", "start_line": 1, "end_line": 1,
+             "content": "x", "oldLine": "5", "newLine": "5"},
+        ]}]})
+
+
 CONTENT = "line1\nline2\nline3\nline4\nline5\n"
 
 

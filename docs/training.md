@@ -43,6 +43,7 @@ ForgeCoder is trained on **software-engineering tasks**, not raw code:
 | debugging  | error + logs → diagnosis + fix                    |
 | architecture | files → component explanation                  |
 | security   | vulnerable code → hardened response               |
+| creation   | "make a minesweeper webpage game" → {"message", "creates"} complete files |
 
 Scaling/quality rules:
 
