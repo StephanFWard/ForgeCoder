@@ -1,9 +1,70 @@
 /** Code-action implementations: explain / fix / refactor / tests / search / error. */
 import * as vscode from 'vscode';
-import { ForgeApi } from '../client/api';
+import { FilePatch, ForgeApi } from '../client/api';
 import { SidebarProvider } from '../chat/SidebarProvider';
-import { activeFileContext, currentWorkspace, diagnosticSummary } from '../context/selection';
+import { ActiveContext, activeFileContext, currentWorkspace, diagnosticSummary } from '../context/selection';
+import { checkAnchors, normalizeLf, planInjection } from '../patch/inject';
 import { showMarkdown } from '../ui/markdown';
+
+interface InjectionOutcome {
+  /** The file was written. */
+  applied: boolean;
+  /** The suggestion can still be reviewed in the sidebar patch workflow. */
+  retryable: boolean;
+}
+
+/**
+ * Inject a suggestion directly into the open file — local, confirmed, and
+ * anchored: the patch must target the open file and the file must be
+ * unchanged since the suggestion was generated.
+ */
+async function injectIntoActiveFile(
+  api: ForgeApi,
+  ctx: ActiveContext,
+  patch: FilePatch,
+  label: string,
+): Promise<InjectionOutcome> {
+  const editor = vscode.window.activeTextEditor;
+  if (!vscode.workspace.isTrusted || !editor || !ctx.workspace || !ctx.file ||
+      editor.document.uri.scheme !== 'file' || editor.document.isDirty) {
+    return { applied: false, retryable: true };
+  }
+  const document = editor.document;
+  const version = document.version;
+  const original = normalizeLf(document.getText());
+  const preview = await api.patchPreview(ctx.workspace, patch);
+  const anchors = checkAnchors({
+    patchPath: patch.path,
+    activeFile: ctx.file,
+    previewOriginal: preview.original,
+    documentText: original,
+  });
+  if (!preview.ok || !anchors.ok) {
+    void vscode.window.showWarningMessage(anchors.reason ?? preview.error ?? 'Preview failed.');
+    return { applied: false, retryable: true };
+  }
+  if (!preview.changed) {
+    return { applied: false, retryable: true };
+  }
+  showMarkdown(`ForgeCoder: ${label}`, preview.diff ?? '');
+  const choice = await vscode.window.showWarningMessage(
+    `Apply the proposed edit to ${ctx.file}?`, { modal: true }, 'Apply',
+  );
+  if (choice !== 'Apply') {
+    return { applied: false, retryable: false };
+  }
+  if (document.isClosed || document.isDirty || document.version !== version) {
+    void vscode.window.showWarningMessage('Editor changed; regenerate the edit.');
+    return { applied: false, retryable: true };
+  }
+  const applied = await api.patchApply(ctx.workspace, patch, true, original);
+  if (!applied.ok) {
+    void vscode.window.showErrorMessage(applied.error ?? 'Apply failed.');
+    return { applied: false, retryable: true };
+  }
+  void vscode.window.showInformationMessage(applied.applied ? `Updated ${ctx.file}.` : 'No changes needed.');
+  return { applied: Boolean(applied.applied), retryable: false };
+}
 
 export function registerCodeActions(
   context: vscode.ExtensionContext,
@@ -40,13 +101,16 @@ export function registerCodeActions(
       if (result.diagnosis) {
         void vscode.window.showInformationMessage(result.diagnosis.split('\n')[0]);
       }
-      const pending = result.patches?.length
-        ? result.patches
-        : undefined;
-      if (pending) {
-        sidebar.offerPatch(ctx.workspace ?? currentWorkspace() ?? '', pending);
+      const plan = planInjection({ patches: result.patches, activeFile: ctx.file, workspace: ctx.workspace });
+      if (plan.kind === 'inject') {
+        const injected = await injectIntoActiveFile(api, ctx, plan.patch, 'Fix');
+        if (!injected.retryable) return;
+      }
+      if (result.patches?.length) {
+        sidebar.offerPatch(ctx.workspace ?? currentWorkspace() ?? '', result.patches);
       } else {
-        showMarkdown('ForgeCoder: Fix', result.diagnosis ?? 'No structured patch was produced.');
+        const fallback = plan.kind === 'offer' ? plan.reason : 'No structured patch was produced.';
+        showMarkdown('ForgeCoder: Fix', result.diagnosis || result.summary || fallback);
       }
     }),
 
@@ -62,9 +126,14 @@ export function registerCodeActions(
         return;
       }
       if (result.patches?.length) {
+        const plan = planInjection({ patches: result.patches, activeFile: ctx.file, workspace: ctx.workspace });
+        if (plan.kind === 'inject') {
+          const injected = await injectIntoActiveFile(api, ctx, plan.patch, 'Refactor');
+          if (!injected.retryable) return;
+        }
         sidebar.offerPatch(ctx.workspace ?? currentWorkspace() ?? '', result.patches);
       } else {
-        showMarkdown('ForgeCoder: Refactor', result.proposal ?? 'No structured patch was produced.');
+        showMarkdown('ForgeCoder: Refactor', result.summary || result.proposal || 'No structured patch was produced.');
       }
     }),
 
@@ -137,42 +206,15 @@ export function registerCodeActions(
           void vscode.window.showWarningMessage('Open a saved file in a trusted workspace first.');
           return;
         }
-        const document = editor.document;
-        const version = document.version;
-        const original = document.getText().replace(/\r\n/g, '\n');
         const instruction = await vscode.window.showInputBox({ prompt: 'What should ForgeCoder change in this file?' });
         if (!instruction?.trim()) return;
         const result = await api.edit(ctx.code, instruction, ctx.workspace, ctx.file, ctx.selection);
-        if (!result.ok || !result.patches?.length) {
-          void vscode.window.showWarningMessage(result.error ?? result.summary ?? 'No edit produced.');
+        const plan = planInjection({ patches: result.patches, activeFile: ctx.file, workspace: ctx.workspace });
+        if (plan.kind === 'offer') {
+          void vscode.window.showWarningMessage(result.error ?? result.summary ?? plan.reason);
           return;
         }
-        if (result.patches.length !== 1 || result.patches[0].path !== ctx.file) {
-          void vscode.window.showWarningMessage('Edit and Apply accepts only the active file. Use the patch preview workflow for other targets.');
-          return;
-        }
-        const patch = result.patches[0];
-        const preview = await api.patchPreview(ctx.workspace, patch);
-        if (!preview.ok || preview.original !== original) {
-          void vscode.window.showWarningMessage(preview.error ?? 'File changed; regenerate the edit.');
-          return;
-        }
-        if (!preview.changed) return;
-        showMarkdown('ForgeCoder: Proposed Edit', preview.diff ?? '');
-        const choice = await vscode.window.showWarningMessage(
-          `Apply the proposed edit to ${ctx.file}?`, { modal: true }, 'Apply',
-        );
-        if (choice !== 'Apply') return;
-        if (document.isClosed || document.isDirty || document.version !== version) {
-          void vscode.window.showWarningMessage('Editor changed; regenerate the edit.');
-          return;
-        }
-        const applied = await api.patchApply(ctx.workspace, patch, true, original);
-        if (!applied.ok) {
-          void vscode.window.showErrorMessage(applied.error ?? 'Apply failed.');
-          return;
-        }
-        void vscode.window.showInformationMessage(applied.applied ? `Updated ${ctx.file}.` : 'No changes needed.');
+        await injectIntoActiveFile(api, ctx, plan.patch, 'Proposed Edit');
       } catch (error) {
         void vscode.window.showErrorMessage(`Edit and Apply failed: ${String(error)}`);
       }

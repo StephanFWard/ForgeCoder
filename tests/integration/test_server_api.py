@@ -273,3 +273,159 @@ def test_apply_rejects_changed_original(client, workspace):
     result = client.post("/v1/patch/apply", json=body, headers={"X-Forge-Confirm": "true"}).json()
     assert result["ok"] is True
     assert "return None" in file.read_text(encoding="utf-8")
+
+
+def _git_workspace(workspace):
+    """Init a repo in the test workspace and commit the fixture file."""
+    import subprocess
+
+    for args in (["init", "-q"], ["config", "user.email", "forge@test"],
+                 ["config", "user.name", "Forge"]):
+        subprocess.run(["git", *args], cwd=str(workspace), check=True)
+    subprocess.run(["git", "add", "-A"], cwd=str(workspace), check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=str(workspace), check=True)
+    return workspace / "src" / "service.py"
+
+
+def _finding(source: str, line: int) -> str:
+    import json
+
+    return json.dumps({"summary": "Guarded the lookup.", "findings": [{
+        "source": source, "path": "src/service.py", "line": line,
+        "severity": "warning", "message": "Defaulting to None can mask a bad key.",
+    }]})
+
+
+def test_edit_and_fix_are_schema_constrained(client, workspace, fake_inference, monkeypatch):
+    """Structured actions constrain the reply instead of trusting the prose contract."""
+    import json
+
+    seen = []
+
+    async def fake_chat(messages, **kwargs):
+        seen.append(kwargs.get("schema"))
+        return json.dumps({
+            "summary": "Added validation.",
+            "diagnosis": "The key was not checked.",
+            "files": [{"path": "src/service.py", "operations": [
+                {"type": "replace", "start_line": 2, "end_line": 2, "content": "        self.validate(key)"},
+            ]}],
+        })
+
+    monkeypatch.setattr(fake_inference, "chat", fake_chat)
+    body = {"workspace": str(workspace), "file": "src/service.py",
+            "code": "def get(self, key):", "instruction": "add validation"}
+
+    edit = client.post("/v1/edit", json=body).json()
+    fix = client.post("/v1/fix", json={**body, "error": "KeyError: 'k'"}).json()
+
+    assert edit["ok"] is True
+    assert edit["patches"][0]["path"] == "src/service.py"
+    assert fix["ok"] is True
+    assert fix["diagnosis"] == "The key was not checked."
+    assert seen[0]["$defs"]["FilePatchPayload"]["properties"]["path"]["minLength"] == 1
+    assert "diagnosis" in seen[1]["properties"] and "diagnosis" not in seen[0]["properties"]
+    # Explain and tests stay free-form: no schema is imposed on prose answers.
+    seen.clear()
+    client.post("/v1/explain", json=body)
+    assert seen == [None]
+
+
+def test_git_changes_review_is_line_anchored(client, workspace, fake_inference, monkeypatch):
+    """The review is schema-constrained, then validated against the supplied diff."""
+    file = _git_workspace(workspace)
+    file.write_text(
+        "class Service:\n    def get(self, key):\n        return self.store.get(key, None)\n",
+        encoding="utf-8",
+    )
+    seen = {}
+
+    async def fake_chat(messages, **kwargs):
+        seen["schema"] = kwargs.get("schema")
+        seen["user"] = messages[-1]["content"]
+        return _finding("unstaged", 3)
+
+    monkeypatch.setattr(fake_inference, "chat", fake_chat)
+    body = client.post("/v1/git/changes", json={"workspace": str(workspace)}).json()
+
+    assert body["ok"] is True
+    assert body["clean"] is False
+    assert body["review_status"] == "validated"
+    assert body["findings"] == [{"source": "unstaged", "path": "src/service.py", "line": 3,
+                                 "severity": "warning",
+                                 "message": "Defaulting to None can mask a bad key."}]
+    assert "- [warning] unstaged src/service.py:3:" in body["review"]
+    assert "src/service.py" in body["diff"]
+    # The call was grammar-constrained and fed the labeled source + path anchors.
+    schema = seen["schema"]
+    assert schema["properties"]["findings"]["items"] == {"$ref": "#/$defs/Finding"}
+    assert {"source", "path", "line", "severity"} <= set(schema["$defs"]["Finding"]["required"])
+    assert schema["$defs"]["Finding"]["additionalProperties"] is False
+    assert "SOURCE: unstaged" in seen["user"]
+    assert "+++ b/src/service.py" in seen["user"]
+    # Review must never write to the tree it is reviewing.
+    assert file.read_text(encoding="utf-8").endswith("return self.store.get(key, None)\n")
+
+
+def test_git_changes_rejects_unanchored_finding(client, workspace, fake_inference, monkeypatch):
+    """A hallucinated line is rejected, but the raw diff still reaches the user."""
+    file = _git_workspace(workspace)
+    file.write_text("class Service:\n    def get(self, key):\n        return None\n",
+                    encoding="utf-8")
+
+    async def fake_chat(messages, **kwargs):
+        return _finding("unstaged", 99)
+
+    monkeypatch.setattr(fake_inference, "chat", fake_chat)
+    body = client.post("/v1/git/changes", json={"workspace": str(workspace)}).json()
+
+    assert body["ok"] is True
+    assert body["review_status"] == "invalid_output"
+    assert body["findings"] == []
+    assert "rejected" in body["review"]
+    assert "return None" in body["diff"]  # the diff is always returned
+
+
+def test_git_changes_rejects_wrong_source_line_numbers(client, workspace, fake_inference, monkeypatch):
+    """Staged line numbers must not be reported as working-tree line numbers."""
+    file = _git_workspace(workspace)
+    file.write_text("class Service:\n    def get(self, key):\n        return None\n",
+                    encoding="utf-8")
+    import subprocess
+
+    subprocess.run(["git", "add", "-A"], cwd=str(workspace), check=True)
+    seen = {}
+
+    async def fake_chat(messages, **kwargs):
+        seen["user"] = messages[-1]["content"]
+        return _finding("unstaged", 3)  # the change is staged, not unstaged
+
+    monkeypatch.setattr(fake_inference, "chat", fake_chat)
+    body = client.post("/v1/git/changes", json={"workspace": str(workspace)}).json()
+
+    assert "SOURCE: staged" in seen["user"]
+    assert body["review_status"] == "invalid_output"
+    assert body["findings"] == []
+
+
+def test_git_changes_untracked_only_is_insufficient_context(client, workspace, fake_inference, monkeypatch):
+    """Untracked files have no diff, so the model is not asked to review them."""
+    import subprocess
+
+    for args in (["init", "-q"], ["config", "user.email", "forge@test"],
+                 ["config", "user.name", "Forge"]):
+        subprocess.run(["git", *args], cwd=str(workspace), check=True)
+    subprocess.run(["git", "add", "-A"], cwd=str(workspace), check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=str(workspace), check=True)
+    (workspace / "src" / "brand_new.py").write_text("NEW = True\n", encoding="utf-8")
+
+    async def fake_chat(messages, **kwargs):
+        raise AssertionError("no diff anchors: the model must not be called")
+
+    monkeypatch.setattr(fake_inference, "chat", fake_chat)
+    body = client.post("/v1/git/changes", json={"workspace": str(workspace)}).json()
+
+    assert body["ok"] is True
+    assert body["review_status"] == "insufficient_context"
+    assert body["findings"] == []
+    assert "Untracked file contents are not included in Git diffs." in body["review"]

@@ -112,6 +112,14 @@ export interface GitStatusResponse {
   recent?: Array<{ hash: string; author: string; subject: string }>;
 }
 
+export interface ReviewFinding {
+  source: 'staged' | 'unstaged';
+  path: string;
+  line: number;
+  severity: 'error' | 'warning' | 'info';
+  message: string;
+}
+
 export interface GitChangesResponse {
   ok: boolean;
   error?: string;
@@ -119,6 +127,8 @@ export interface GitChangesResponse {
   branch?: string | null;
   entries?: GitChangeEntry[];
   review?: string;
+  review_status?: 'validated' | 'invalid_output' | 'insufficient_context' | 'unavailable';
+  findings?: ReviewFinding[];
   diff?: string;
 }
 

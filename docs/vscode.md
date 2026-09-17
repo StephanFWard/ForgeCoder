@@ -12,7 +12,10 @@
   40 lines of context before, 20 after, default `max_tokens 64`,
   `temperature 0.1`.
 - **Code actions** — `Explain`, `Fix`, `Refactor`, `Generate Tests` from the
-  editor context menu.
+  editor context menu. `Fix` and `Refactor` inject the suggestion straight into
+  the open file (diff shown, explicit confirm, stale-file guard) when the
+  structured patch targets that file; patches for other files or multi-file
+  changes go to the sidebar review flow instead.
 - **Explain Error** — gathers current diagnostics + file + selection and asks
   the server for a diagnosis.
 - **Search Workspace** — FTS5 repository search with jump-to-result.

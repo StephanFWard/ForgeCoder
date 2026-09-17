@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from core.git import diff as git_diff_mod
 from core.git import operations as git_ops
 from core.git import status as git_status_mod
+from core.git.review import REVIEW_PROMPT, Review, prepare_review, render_review, validate_review
 from core.git.util import is_git_repo
 from forge_server.main import AppState, get_state
 from forge_server.security import (
@@ -84,26 +85,34 @@ async def changes(req: WorkspaceRequest, state: AppState = Depends(get_state)) -
 
     from core.retrieval.budget import truncate_to_tokens
 
-    review_prompt = (
-        "Review these working-tree changes. For each file: what changed, why it "
-        "matters, any bugs or risks introduced, and one suggested next step "
-        "(test, refactor, or commit). Be specific and concise.\n\n"
-        f"Changed files: {', '.join(e['path'] for e in entries[:20]) or 'none'}\n\n"
-        f"Diff:\n{truncate_to_tokens(diff_text, 1800)}"
-    )
-    review = ""
-    try:
-        review = await state.inference.chat(
-            [{"role": "system", "content": (
-                "You are ForgeCoder reviewing uncommitted git changes. Use only "
-                "the supplied diff. If the diff is empty, say the tree is clean."
-            )},
-             {"role": "user", "content": review_prompt}],
-            temperature=0.2, max_tokens=512,
-            presence_penalty=0.2, frequency_penalty=0.2,
-        )
-    except Exception as exc:  # llama offline: still return the raw diff
-        review = f"(model unavailable: {exc})"
+    context, anchors, truncated = prepare_review(staged, unstaged)
+    findings: list[dict] = []
+    review_status = "insufficient_context"
+    review = "Changes exist, but no added text lines are available for grounded review."
+    if anchors:
+        try:
+            raw = await state.inference.chat(
+                [{"role": "system", "content": REVIEW_PROMPT},
+                 {"role": "user", "content": context}],
+                temperature=0.1, max_tokens=1024, schema=Review.model_json_schema(),
+            )
+            validated = validate_review(raw, anchors)
+            review = render_review(validated)
+            findings = [f.model_dump() for f in validated.findings]
+            review_status = "validated"
+        except ValueError:
+            review_status = "invalid_output"
+            review = "Model review rejected: invalid JSON or unsupported file/line references."
+        except Exception:  # llama offline: still return the raw diff
+            review_status = "unavailable"
+            review = "Model unavailable; inspect the raw diff."
+    limitations = []
+    if truncated:
+        limitations.append("Diff truncated; only supplied lines were reviewed.")
+    if any(e["worktree"] == "untracked" for e in entries):
+        limitations.append("Untracked file contents are not included in Git diffs.")
+    if limitations:
+        review += "\n\n" + "\n".join(limitations)
 
     return {
         "ok": True,
@@ -111,6 +120,8 @@ async def changes(req: WorkspaceRequest, state: AppState = Depends(get_state)) -
         "branch": git_ops.current_branch(req.workspace),
         "entries": entries,
         "review": review,
+        "review_status": review_status,
+        "findings": findings,
         "diff": truncate_to_tokens(diff_text, 6000),
     }
 

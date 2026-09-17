@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends
 
 from core.inference.chat import build_chat_messages
 from core.inference.client import InferenceError
+from core.patching.contracts import EDIT_SCHEMA, FIX_SCHEMA
 from core.patching.parser import PatchParseError, extract_json, parse_patch
 from core.retrieval.budget import truncate_to_tokens
 from core.retrieval.context import ContextBuilder
@@ -28,13 +29,17 @@ class ActionRequest(ContextRequest):
     instruction: str | None = None # e.g. "add null validation"
 
 
-async def _run(state: AppState, req: ActionRequest, behavior: str) -> str:
+async def _run(state: AppState, req: ActionRequest, behavior: str, *,
+               schema: dict | None = None) -> str:
     """One model call for a code action.
 
     ``behavior`` selects the behavior-specific system prompt (chat/edit/fix/
     test) via ContextBuilder, and the retrieved repository context is injected
     into the user turn so the model can produce line numbers that refer to
     real files instead of hallucinating them.
+
+    ``schema`` grammar-constrains the reply via llama.cpp's ``json_schema``
+    response format, so a structured action cannot come back as prose.
     """
     builder = ContextBuilder(state.index)
     built = builder.build(
@@ -55,7 +60,7 @@ async def _run(state: AppState, req: ActionRequest, behavior: str) -> str:
     if context_text:
         user = f"{user}\n\nRepository context:\n{truncate_to_tokens(context_text, 2000)}"
     messages = build_chat_messages(built.system, user)
-    return await state.inference.chat(messages, temperature=0.1, max_tokens=1024)
+    return await state.inference.chat(messages, temperature=0.1, max_tokens=1024, schema=schema)
 
 
 @router.post("/explain")
@@ -81,7 +86,7 @@ async def tests(req: ActionRequest, state: AppState = Depends(get_state)) -> dic
 @router.post("/edit")
 async def edit(req: ActionRequest, state: AppState = Depends(get_state)) -> dict:
     """Return a structured patch (summary + files) or explain why it failed."""
-    text = await _run(state, req, "edit")
+    text = await _run(state, req, "edit", schema=EDIT_SCHEMA)
     try:
         payload = extract_json(text)
         patches = parse_patch(payload)
@@ -100,7 +105,7 @@ async def fix(req: ActionRequest, state: AppState = Depends(get_state)) -> dict:
     """Explain + structured patch for a bug/error context."""
     if not req.error and not req.code:
         return {"ok": False, "error": "Provide error output or code to fix"}
-    text = await _run(state, req, "fix")
+    text = await _run(state, req, "fix", schema=FIX_SCHEMA)
     try:
         payload = extract_json(text)
         patches = parse_patch(payload)

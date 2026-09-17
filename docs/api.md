@@ -109,6 +109,15 @@ Returns a structured patch or a fallback explanation:
 If the model does not emit valid JSON, the server returns
 `{ "ok": false, "reason": "no_structured_patch", "proposal": "<model text>" }`.
 
+`/v1/edit` and `/v1/fix` grammar-constrain the reply (`EDIT_SCHEMA` /
+`FIX_SCHEMA` in `core/patching/contracts.py`, sent as llama.cpp's
+`json_schema` response format), so the shape above is produced by the grammar
+rather than trusted from prose. Every operation carries
+`type`, `start_line`, `end_line` and `content`; an empty `files` list is the
+model's explicit "not enough context to edit safely" answer. The schemas accept
+exactly what `core/patching/parser.py` parses, and cross-field ordering
+(`end_line >= start_line`, non-overlapping operations) is still enforced there.
+
 ## Retrieval
 
 ### `POST /v1/index`
@@ -200,6 +209,36 @@ Environment overrides: `FORGECODER_<UPPERCASE_FIELD_NAME>` (e.g.
 | `POST /v1/git/commit`   | required    | Stage (`add_all`) and commit with a message    |
 | `POST /v1/git/push`     | required    | Push current branch to origin                  |
 | `POST /v1/git/pull`     | required    | Pull origin into the current branch            |
+
+### `POST /v1/git/changes` — grounded review
+
+The diff is split into labelled `staged` and `unstaged` sections; only added
+(`+`) lines are offered as anchors, and their NEW-side line numbers come from
+the `@@ -a,b +c,d @@` hunk header. Findings the model returns are rejected
+unless they point at a supplied anchor, so a hallucinated line, an
+unseen path, or a line number borrowed from the other coordinate system cannot
+reach the UI:
+
+```json
+{
+  "ok": true,
+  "clean": false,
+  "review": "Guarded the lookup.\n\n- [warning] unstaged src/service.py:3: ...",
+  "review_status": "validated",
+  "findings": [
+    { "source": "unstaged", "path": "src/service.py", "line": 3,
+      "severity": "warning", "message": "Defaulting to None can mask a bad key." }
+  ],
+  "diff": "..."
+}
+```
+
+`review_status` is one of `validated` (findings passed anchor validation),
+`invalid_output` (schema-invalid JSON or unsupported file/line references),
+`insufficient_context` (no added lines to anchor to — e.g. only untracked
+files) or `unavailable` (the local model is offline). The raw `diff` is always
+returned, and the endpoint stays read-only: it never writes to the tree it is
+reviewing.
 
 ## Plan -> Act events (v0.2)
 
