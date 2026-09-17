@@ -40,6 +40,7 @@ class TaskFrame:
     acceptance: list[str] = field(default_factory=list)
     unknowns: list[str] = field(default_factory=list)
     ready: bool = True
+    note: str = ""
 
     def open_unknowns(self) -> list[str]:
         """Unknowns that must be resolved (or asked about) before editing."""
@@ -54,6 +55,7 @@ class TaskFrame:
             "acceptance": list(self.acceptance),
             "unknowns": list(self.unknowns),
             "ready": self.ready,
+            "note": self.note,
         }
 
 
@@ -142,6 +144,11 @@ def build_frame(goal: str, *, file: str | None = None,
     unknowns = _unknowns(file=file, selection=selection, evidence=evidence,
                          error=error, acceptance=scope.acceptance_criteria, facts=facts,
                          creation_targets=creation_targets)
+    note = ""
+    if creation_targets:
+        note = ("Creation task: generate complete new files ("
+                + ", ".join(creation_targets)
+                + "). Do not modify existing files and do not ask which file.")
     return TaskFrame(
         goal=clean_goal or "unspecified",
         facts=facts,
@@ -150,6 +157,7 @@ def build_frame(goal: str, *, file: str | None = None,
         acceptance=list(scope.acceptance_criteria),
         unknowns=unknowns,
         ready=bool(facts) or bool(creation_targets),
+        note=note,
     )
 
 
@@ -160,6 +168,8 @@ def render_frame(frame: TaskFrame, *, max_forbidden: int = 6) -> str:
     all, so the forbidden list is summarised and every section is bounded.
     """
     lines = ["TASK FRAME", f"Goal: {frame.goal}"]
+    if frame.note:
+        lines.append("Task note: " + frame.note)
 
     if frame.facts:
         lines.append("Verified from supplied context: " + "; ".join(frame.facts[:MAX_FACTS]))
@@ -174,7 +184,17 @@ def render_frame(frame: TaskFrame, *, max_forbidden: int = 6) -> str:
                      + (f", and {more} more patterns" if more > 0 else ""))
     lines.append("Acceptance evidence: " + "; ".join(frame.acceptance[:3]))
     if frame.unknowns:
-        lines.append("Open unknowns: " + "; ".join(frame.unknowns[:MAX_UNKNOWNS]))
+        # Imperatives, not questions: a 1.5B model that reads literal questions
+        # ("which file should the change land in?") replies with them verbatim —
+        # once as four fabricated "[warn] ask-dont-guess" lines, questions and
+        # informational lines alike. State who resolves them and what may never
+        # be echoed.
+        lines.append(
+            "Unknowns to resolve yourself (from the request or the supplied "
+            "context; ask the user only what is truly undecidable, and never "
+            "repeat them, rule names, or severity markers in the reply): "
+            + "; ".join(frame.unknowns[:MAX_UNKNOWNS])
+        )
     lines.append("Evidence status: " + (
         "sufficient — edit only inside the allowed paths above"
         if frame.ready else

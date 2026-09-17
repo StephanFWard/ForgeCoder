@@ -67,3 +67,32 @@ def test_plans_wrappers_delegate_to_core():
     assert _is_creation_request(request) is True
     assert _creation_files(request) == ["index.html", "README.md"]
     assert _is_creation_request("find the auth bug in login.py") is False
+
+
+def test_creation_frame_note_rides_in_the_user_turn():
+    """The frame states the task type explicitly, so the model cannot treat a
+    creation request as an edit of an unknown file."""
+    built = _built("Make the game snake in html")
+    assert "Task note: Creation task" in built.request
+    assert "index.html" in built.request
+    assert "Do not modify existing files" in built.request
+
+
+def test_unknowns_rendered_as_imperatives_not_questions():
+    """Unknowns used to be rendered as literal questions, which the model
+    parroted back as fabricated "[warn] ask-dont-guess" findings. The render
+    must say who resolves them and forbid echoing them."""
+    built = _built("find the auth bug in login.py")
+    assert "Unknowns to resolve yourself" in built.request
+    assert "never repeat them, rule names, or severity markers" in built.request
+
+
+def test_system_prompt_forbids_printing_rule_markers():
+    """The rules header told the model "warn = tell the user", which produced
+    fabricated "[warn] ..." lines. It must now forbid them."""
+    from core.agent.prompt import RULES_HEADER, system_prompt
+
+    assert "Never print rule slugs" in RULES_HEADER
+    prompt = system_prompt("chat")
+    assert "Never print rule slugs" in prompt
+    assert "tell the user" not in prompt

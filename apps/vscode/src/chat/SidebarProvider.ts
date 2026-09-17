@@ -270,9 +270,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this.post('assistantStart', {});
 
     const editor = vscode.window.activeTextEditor;
+    let workspace: string | undefined;
     let turn: ChatTurn = { message, history: this.history };
     if (editor) {
-      const workspace = vscode.workspace.getWorkspaceFolder(editor.document.uri)?.uri.fsPath;
+      workspace = vscode.workspace.getWorkspaceFolder(editor.document.uri)?.uri.fsPath;
       const file = workspace
         ? vscode.workspace.asRelativePath(editor.document.uri, false).replace(/\\/g, '/')
         : editor.document.uri.fsPath;
@@ -292,6 +293,25 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           this.post('delta', { content: delta });
         } else if (ev.type === 'error') {
           this.post('error', { message: String(ev.message) });
+        } else if (ev.type === 'patch') {
+          // Creation request: the server prepared new files — offer the
+          // standard review/apply bar instead of leaving them as prose.
+          const creates = (ev.creates ?? {}) as Record<string, string>;
+          const patches = (ev.patches ?? []) as FilePatch[];
+          if (Object.keys(creates).length || patches.length) {
+            this.pendingMultiPatch = {
+              workspace: workspace ?? '',
+              patches,
+              creates,
+              message: String(ev.message ?? ''),
+            };
+            this.pendingPatch = undefined;
+            this.reveal();
+            this.post('pendingMultiPatch', {
+              count: patches.length + Object.keys(creates).length,
+              paths: patches.map((p) => p.path).concat(Object.keys(creates)),
+            });
+          }
         } else if (ev.type === 'done') {
           this.post('assistantDone', {});
         }

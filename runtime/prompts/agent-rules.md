@@ -70,6 +70,8 @@ severity: warn
 check: declared_unknowns
 Unresolved unknowns are named instead of being silently resolved by a plausible choice.
 If the context cannot support the edit, reply with the specific missing information and an empty `files` list.
+Resolve from the request whatever is derivable — e.g. the files a creation request names — and ask only what is truly undecidable.
+Never repeat unknowns, rule slugs, or severity markers in the reply; the rule layer reports them, not you.
 
 ### writes-need-confirmation
 category: Approval

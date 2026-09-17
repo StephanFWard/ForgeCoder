@@ -8,6 +8,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
+from core.agent.creation import is_creation_request
 from core.inference.chat import build_chat_messages
 from core.inference.verify import verify_output
 from core.retrieval.adaptive import classify_query
@@ -16,6 +17,7 @@ from core.retrieval.context import ContextBuilder
 from core.retrieval.hierarchical import HierarchicalContextBuilder
 from forge_server.context import ContextRequest
 from forge_server.main import AppState, get_state
+from forge_server.security import check_permission
 
 router = APIRouter(prefix="/v1", tags=["chat"])
 
@@ -24,9 +26,56 @@ def _sse(data: dict) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+async def _chat_creation(req: ContextRequest, state: AppState) -> StreamingResponse:
+    """Creation request over plain chat: prepare files, offer the patch bar.
+
+    The heavy lifting (create-schema generation with a corrective retry,
+    existing-file patches refused) is the same ``_edit_step`` the act pipeline
+    uses. The client already knows how to render a ``patch`` event into its
+    review/apply bar, so a creation request behaves like any other patch.
+    """
+    from forge_server.plans import _edit_step  # lazy: imports forge_server.main
+
+    check_permission("READ_FILE")
+    prepared = await _edit_step(state, req.workspace, req.message, {},
+                                plan_request=req.message)
+
+    async def event_stream():
+        yield _sse({"type": "context", "total_tokens": 0, "sections": ["creation"]})
+        if not prepared:
+            yield _sse({"type": "error", "message": (
+                "Creation failed: the model did not produce a valid file set. "
+                "Try Plan & Act mode for a step-by-step run."
+            )})
+            yield _sse({"type": "done"})
+            return
+        patches = prepared.get("files", [])
+        creates = prepared.get("creates", {})
+        names = [str(f.get("path", "?")) for f in patches] + [str(k) for k in creates]
+        summary = prepared.get("message") or f"Prepared {len(names)} file(s)."
+        yield _sse({"type": "delta", "content": (
+            summary + "\n\nReady to write: " + ", ".join(names)
+            + " — review before applying."
+        )})
+        yield _sse({"type": "patch", "patches": patches, "creates": creates,
+                    "message": summary})
+        yield _sse({"type": "done"})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
 @router.post("/chat")
 async def chat(req: ContextRequest, state: AppState = Depends(get_state)) -> StreamingResponse:
-    """Build context (retrieval + file selection + git), call llama.cpp, stream back."""
+    """Build context (retrieval + file selection + git), call llama.cpp, stream back.
+
+    Creation requests ("make the game snake in html") are routed to the
+    creation pipeline instead of free-form streaming: plain chat had no
+    creation routing, so the model streamed echoes of its task frame —
+    ``[warn] ask-dont-guess: ...`` lines — instead of a game. Here the reply is
+    a real ``creates`` patch surfaced through the standard review/apply flow.
+    """
+    if is_creation_request(req.message):
+        return await _chat_creation(req, state)
     builder = ContextBuilder(state.index)
     built = builder.build(
         req.message,

@@ -1,6 +1,33 @@
 """Integration tests for the Forge API with a mocked inference backend."""
 
 
+def test_chat_creation_request_returns_patch_event(client, workspace):
+    """A creation request in plain chat must come back as a patch event with
+    the created files — not as prose or ask-dont-guess frame echoes."""
+    payload = {"message": "Make the game snake in html", "workspace": str(workspace)}
+    with client.stream("POST", "/v1/chat", json=payload) as resp:
+        assert resp.status_code == 200
+        lines = "".join(resp.iter_text())
+    assert '"type": "patch"' in lines
+    assert "index.html" in lines
+    assert "ask-dont-guess" not in lines
+    assert '"type": "done"' in lines
+
+
+def test_chat_creation_failure_reports_instead_of_prose(client, workspace, fake_inference, monkeypatch):
+    """When no valid file set is produced, the user gets a clear error, and
+    the stream still terminates cleanly."""
+    async def bad_chat(messages, **kwargs):
+        return "Sure! Here is a snake game... (prose, no creates)"
+
+    monkeypatch.setattr(fake_inference, "chat", bad_chat)
+    payload = {"message": "Make the game snake in html", "workspace": str(workspace)}
+    with client.stream("POST", "/v1/chat", json=payload) as resp:
+        lines = "".join(resp.iter_text())
+    assert '"type": "error"' in lines
+    assert '"type": "done"' in lines
+
+
 def test_health(client):
     resp = client.get("/health")
     assert resp.status_code == 200

@@ -6,6 +6,32 @@ adheres to **0.x** versioning until 1.0.
 
 ## [Unreleased]
 
+### Fixed — plain chat creates files instead of echoing its own frame
+
+- `POST /v1/chat` routes creation requests ("make the game snake in html")
+  through the creation pipeline (`_edit_step`, with its corrective retry):
+  the reply streams a summary plus a new `patch` SSE event carrying
+  `{patches, creates, message}`, which the sidebar renders through the
+  standard View Diff / Apply bar (`apps/vscode/src/chat/SidebarProvider.ts`).
+  Previously plain chat had no creation routing at all, so the request was
+  answered with prose echoes of the task frame.
+- The task frame no longer teaches the model to fabricate warnings:
+  - the rules header said "warn = tell the user", and the model obeyed —
+    emitting fabricated `[warn] ask-dont-guess:` lines (even quoting the
+    informational "Evidence status" line as an unresolved question). The
+    header now forbids printing rule slugs, severities, or `[warn]`/`[block]`
+    markers (`core/agent/prompt.py`).
+  - frame unknowns were rendered as literal questions ("which file should
+    the change land in?") that came back verbatim; they are now imperatives
+    addressed to the model, with an explicit do-not-echo directive
+    (`core/agent/frame.py`).
+  - `ask-dont-guess` (`core/agent/rules.py`, `runtime/prompts/agent-rules.md`)
+    resolves what is derivable from the request and asks only what is truly
+    undecidable.
+- Creation task frames carry an explicit note ("Creation task: generate
+  complete new files (index.html, README.md). Do not modify existing files
+  and do not ask which file.") so the model never re-derives the target.
+
 ### Fixed — creation requests are no longer interrogated as edits
 
 - Task frames and scope contracts are now creation-aware

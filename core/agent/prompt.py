@@ -19,7 +19,12 @@ from collections.abc import Iterable
 from core.agent.frame import TaskFrame, render_frame
 from core.agent.rules import Rule, load_rules, rules_for_behavior
 
-RULES_HEADER = "OPERATING RULES (this reply is checked against them; block = refuse, warn = tell the user)"
+RULES_HEADER = (
+    "OPERATING RULES (your reply is checked against them before it is shown). "
+    "block = refuse the action and name what is missing. "
+    "warn = a caveat to respect while answering. "
+    "Never print rule slugs, severities, or [warn]/[block] markers in your reply."
+)
 RULES_POINTER = "The full router with the check behind each rule is runtime/prompts/agent-rules.md."
 DEFAULT_USER_TURN_TOKENS = 3800
 

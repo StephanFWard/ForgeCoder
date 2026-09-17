@@ -1,4 +1,5 @@
 """Integration test configuration: real app, mocked inference, temp workspace."""
+import json
 import sys
 from pathlib import Path
 
@@ -24,6 +25,17 @@ class FakeInference:
 
     async def chat(self, messages, **kwargs) -> str:
         self.chat_calls += 1
+        # The create schema ({"message", "creates"}) is the whole-file
+        # generation contract; answer it with a valid creation reply so the
+        # creation routing can be tested end to end.
+        schema = kwargs.get("schema") or {}
+        if "creates" in (schema.get("properties") or {}):
+            return json.dumps({
+                "message": "Created the game.",
+                "creates": {
+                    "index.html": "<!doctype html><html><body><h1>Game</h1></body></html>",
+                },
+            })
         return "Fake explanation for the supplied code."
 
     async def chat_stream(self, messages, **kwargs):

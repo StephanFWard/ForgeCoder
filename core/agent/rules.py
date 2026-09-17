@@ -58,7 +58,7 @@ DEFAULT_RULES: tuple[Rule, ...] = (
     Rule("no-unverified-test-claims", "Definition of done", "warn", "no_unverified_claims",
          "Do not state that tests, lint, or builds passed unless they were run."),
     Rule("ask-dont-guess", "Uncertainty", "warn", "declared_unknowns",
-         "Name unresolved unknowns instead of resolving them by a plausible choice."),
+         "Resolve from the request what is derivable; ask only a fact that is genuinely undecidable, and never echo unknowns, rule names, or severity markers."),
     Rule("writes-need-confirmation", "Approval", "block", "confirmed_write",
          "No write without preview, explicit confirmation, and a stale-file anchor."),
 )
