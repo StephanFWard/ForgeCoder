@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from core.retrieval.budget import estimate_tokens, fit_to_budget, truncate_to_tokens
-from core.retrieval.context import _selection_snippet, load_prompt
+from core.retrieval.context import _numbered_lines, _read_lines, load_prompt
 from core.retrieval.search import SearchEngine
 
 # ---------------------------------------------------------------------------
@@ -164,7 +164,8 @@ class HierarchicalContextBuilder:
 
         # --- Fallback: current-file snippet ----------------------------------
         if not root.children and file and workspace:
-            snippet = _selection_snippet(Path(workspace) / file, selection)
+            lines = _read_lines(Path(workspace) / file)
+            snippet = _numbered_lines(lines, selection) if lines is not None else ""
             if snippet:
                 text = f"### {file}\n```\n{snippet}\n```"
                 text = truncate_to_tokens(text, max(budget - used - 200, 100))

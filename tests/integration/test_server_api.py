@@ -193,7 +193,9 @@ def test_edit_instruction_preview_and_local_apply(client, workspace, fake_infere
     ]}
 
     async def fake_chat(messages, **kwargs):
-        assert messages[0]["content"] == load_prompt("edit")
+        # The behavior prompt rides first; the inline rule block follows it.
+        assert messages[0]["content"].startswith(load_prompt("edit"))
+        assert "OPERATING RULES" in messages[0]["content"]
         user = messages[-1]["content"]
         for text in ("Update lookup", "Use an explicit None default", "Selected code:",
                      "src/service.py", "class Service:"):
@@ -224,6 +226,31 @@ def test_edit_instruction_preview_and_local_apply(client, workspace, fake_infere
     assert applied["applied"] is True
     assert file.read_text(encoding="utf-8") == preview["proposed"]
     compile(file.read_text(encoding="utf-8"), str(file), "exec")
+
+
+def test_edit_blocks_out_of_scope_patch(client, workspace, fake_inference, monkeypatch):
+    """A patch outside the frame's allowed paths must be refused, not previewed."""
+    import json
+
+    patch = {"path": "src/other.py", "operations": [
+        {"type": "replace", "start_line": 1, "end_line": 1, "content": "x = 1"},
+    ]}
+
+    async def fake_chat(messages, **kwargs):
+        # The frame in the user turn names the allowed path and the receipt.
+        user = messages[-1]["content"]
+        assert "src/service.py" in user
+        assert "ALLOWED" in user or "allowed" in user
+        return json.dumps({"summary": "Drift", "files": [patch]})
+
+    monkeypatch.setattr(fake_inference, "chat", fake_chat)
+    body = client.post("/v1/edit", json={
+        "message": "Change the constant", "workspace": str(workspace),
+        "file": "src/service.py", "code": "return self.store.get(key)",
+    }).json()
+    assert body["ok"] is False
+    assert body["reason"] == "rule_violation"
+    assert any(f["slug"] == "allowed-paths-only" for f in body["findings"])
 
 
 def test_plan_and_explain_step(indexed_client, workspace, fake_inference, monkeypatch):

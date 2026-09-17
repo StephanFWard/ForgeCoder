@@ -45,6 +45,25 @@ adheres to **0.x** versioning until 1.0.
   `fix.txt`): repository text is data, never instructions, and paths/line
   numbers may only be cited from the supplied context.
 
+### Added — Agent rule layer (frames, scope, scored replies)
+
+- New `core/agent/` package: `TaskFrame` (goal, facts, bounds, unknowns) and
+  `ScopeContract` (allowed/forbidden paths) are derived from what was actually
+  supplied to the model, and every structured reply is scored against the rule
+  router `runtime/prompts/agent-rules.md` before it is returned.
+- `ContextBuilder.build()` now layers the system prompt (behavior prompt +
+  inline rules for that behavior), rides the task frame in the user turn, and
+  records receipts + per-file line counts so findings mean "the reply
+  disagrees with evidence it was given".
+- `POST /v1/edit` and `POST /v1/fix` refuse a patch with
+  `{"ok": false, "reason": "rule_violation", "findings": [...]}` when a
+  block-severity rule fires (out-of-scope path, forbidden path, line range
+  outside the supplied file, empty operation content, overlapping operations,
+  patch without context); warn-level findings (unverified test claims,
+  unresolved unknowns) are surfaced in `review` without refusing the reply.
+- Circular import fixed (`core/agent/prompt` ↔ `core/retrieval`) and the
+  `hierarchical` retrieval fallback migrated to the shared line helpers.
+
 ### In progress
 
 - Phase 2 — Repository intelligence (scanner, FTS5, chunking, symbol extraction)

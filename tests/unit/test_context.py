@@ -1,4 +1,5 @@
 """Tests for repository context assembly (batch chunking + dedupe)."""
+from core.agent import system_prompt
 from core.retrieval.context import ContextBuilder
 from core.retrieval.search import SearchResult
 
@@ -44,14 +45,13 @@ def test_build_appends_chunks_within_budget():
 
 def test_active_selection_wins_over_stale_index_under_budget(tmp_path):
     from core.retrieval.budget import estimate_tokens
-    from core.retrieval.context import load_prompt
 
     (tmp_path / "active.py").write_text(
         "\n".join(f"value_{i} = {i}" for i in range(1, 201)), encoding="utf-8",
     )
     results = [_result("active.py", 180, 182, "STALE INDEX CONTENT")]
     results += [_result(f"other{i}.py", 1, 100, (f"other_{i} = 1\n" * 100)) for i in range(20)]
-    budget = estimate_tokens(load_prompt("edit")) + 400
+    budget = estimate_tokens(system_prompt("edit")) + 400
     built = ContextBuilder(search_engine=_StubEngine(results)).build(
         "Update selected values", workspace=str(tmp_path), file="active.py",
         selection=(180, 182), budget=budget, behavior="edit",
