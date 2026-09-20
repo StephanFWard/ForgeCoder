@@ -42,6 +42,11 @@ wandb/
 *.log
 logs/
 
+# ---------- Local secrets (never commit API keys) ----------
+.env
+.env.*
+!.env.example
+
 # ---------- Editor / OS ----------
 .idea/
 .vscode/

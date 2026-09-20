@@ -57,14 +57,33 @@ dev = [
 mcp = [
     "mcp>=1.0,<2",
 ]
+# Upstream `jev` (PyPI 0.3.0) requires Python >= 3.14 and a paid TypeSafe API
+# key, so it is an optional extra rather than a dependency: on older
+# interpreters the environment marker makes pip skip it, and
+# `core.system_one.jev_compat` provides the same decorator API against the free
+# backends. `pip install -e ".[jev]"` is safe on every supported Python.
+jev = [
+    "jev>=0.3.0; python_version >= '3.14'",
+]
 
 [project.scripts]
 forge-server = "forge_server.main:run"
 forge-index = "core.indexer.index:cli"
 forge-mcp = "core.mcp_server:main"
+forge-decide = "core.system_one.cli:main"
+
+[tool.setuptools]
+# Two source roots, one distribution: `forge_server` lives under apps/server/,
+# `core` at the repository root. Both roots must appear in `packages.find.where`
+# — and the second one has to be "." rather than "core", because setuptools
+# derives package names *relative to each root*, so a "core" root emits
+# `agent`/`indexer`/... and never `core` itself. Without this, an installed
+# `core.*` entry point (`forge-index`, `forge-mcp`, `forge-decide`) fails with
+# "No module named 'core'" outside the repository root.
+package-dir = { "forge_server" = "apps/server/forge_server", "core" = "core" }
 
 [tool.setuptools.packages.find]
-where = ["apps/server", "core"]
+where = ["apps/server", "."]
 include = ["forge_server*", "core*"]
 namespaces = false
 

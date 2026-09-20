@@ -6,6 +6,52 @@ adheres to **0.x** versioning until 1.0.
 
 ## [Unreleased]
 
+### Added — System One decision layer (Jev-shaped, free by default)
+
+- New `core/system_one/` package: typed `choice` / `score` / `noul` questions
+  answered against a state with probability distributions and a confidence
+  (TypeSafe AI's Jev "System One" contract), served by **free backends**:
+  `deterministic` (default — IDF-weighted lexical softmax, offline, byte-for-byte
+  reproducible, no model/network/key) and `local` (free on-device llama.cpp
+  verdicts blended into the same shape, degrading to deterministic when the
+  server is down). The billed hosted Jev API exists as `jev` but is opt-in only:
+  it requires `FORGECODER_SYSTEM_ONE_ALLOW_PAID=1` **and** a `JEV_API_KEY`.
+- `Decider` facade + weighted composition helpers (`answer_value`, `combine`,
+  `gate`, `top_choice`, `expected_score`) — weights live in the caller's code,
+  so a priority change is a coefficient change, not a prompt change.
+- `jev_compat`: the upstream `jev` decorator API (`@fn`, `decide`, `BaseModel`)
+  re-implemented for Python 3.10+, because PyPI `jev` 0.3.0 requires
+  Python ≥ 3.14 and a paid key; `pip install -e ".[jev]"` installs the real
+  wheel only on 3.14+ (environment marker) and is safe on every supported Python.
+- `POST /v1/decide` and `GET /v1/decide/backends` (`apps/server/forge_server/decide.py`):
+  Jev-shaped request/response plus ForgeCoder `backend`/`free` metadata; local
+  usage always reports `cost_usd: 0.0`.
+- Weighted retrieval rerank (`core/system_one/rerank.py`, wired into
+  `POST /v1/search` via `"weighted": true`): one batched `score` question per
+  candidate, final order = `(1-w)·heuristic + w·expected_level` (default
+  `w = 0.35`), each row carrying `weighted_score`, `system_one` and
+  `system_one_confidence`.
+- `forge-decide` CLI entry point (`core/system_one/cli.py`): one decision from
+  stdin/file, `--backends` catalog, `--allow-paid` guard for the billed backend.
+- Local secret integration: `.env.local` (gitignored; `.env.example` documents
+  the names) supplies `JEV_API_KEY` / `JEV_API_URL` / `JEV_MODEL` to the paid
+  backend without touching any committed file; a real environment variable
+  always wins.
+- Paid-backend endpoint selection by key prefix: `jv_live_...` keys target the
+  managed wrapper (`jevtypesafeai.com/api/v1/decide`), any other key targets the
+  official TypeSafe Decision API (`api.typesafe.ai/v1/systemone`), which requires
+  a `model` field — sent as `JEV_MODEL` or the default `jev-latest`.
+  `ScoreAnswer` now accepts the official payload's `legend` field. Live-verified
+  end to end (async + sync paths) against the official API.
+- Packaging fix: setuptools `package-dir`/`packages.find` now map **both** source
+  roots (`apps/server` → `forge_server`, repo root → `core`), so installed entry
+  points (`forge-server`, `forge-index`, `forge-mcp`, `forge-decide`) work outside
+  the repository directory; previously `core.*` scripts failed with
+  `No module named 'core'`.
+- Unit tests (`tests/unit/test_system_one.py`) and integration tests
+  (`tests/integration/test_server_api.py` decide endpoints); docs in
+  `docs/system-one.md`.
+
 ### Fixed — plain chat creates files instead of echoing its own frame
 
 - `POST /v1/chat` routes creation requests ("make the game snake in html")

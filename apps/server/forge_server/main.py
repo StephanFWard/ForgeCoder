@@ -66,12 +66,14 @@ def create_app(config: Config | None = None) -> FastAPI:
     # Retrieval, code-actions, git and plan/act live in their own modules.
     try:
         from forge_server.actions import router as actions_router
+        from forge_server.decide import router as decide_router
         from forge_server.git import router as git_router
         from forge_server.plans import router as plans_router
         from forge_server.retrieval import router as retrieval_router
 
         app.include_router(actions_router)
         app.include_router(retrieval_router)
+        app.include_router(decide_router)
         app.include_router(git_router)
         app.include_router(plans_router)
     except Exception:  # pragma: no cover - never crash core API on import issue

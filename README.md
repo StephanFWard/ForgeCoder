@@ -58,10 +58,11 @@ native VS Code extension.
 apps/server    FastAPI "Forge" API  (:8787, localhost only)
 apps/vscode    TypeScript VS Code extension (chat panel, completion, diffs)
 core           indexer / retrieval / inference / patching / git / memory
+               system_one (deterministic weighted decisions, free)
 training       dataset + QLoRA pipeline (runs on a GPU host)
 runtime        llama.cpp launcher, prompts, grammars
 installer      Inno Setup script (Windows)
-docs           architecture, api, memory, training, vscode guides
+docs           architecture, api, system-one, memory, training, vscode guides
 tests          unit + integration + fixtures
 models         base / adapters / merged / gguf (gitignored contents)
 ```
@@ -128,11 +129,50 @@ python training/scripts/quantize_gguf.py --model models/gguf/forgecoder-fp16.ggu
 | `POST /v1/fix`           | Fix code + error context                     |
 | `POST /v1/tests`         | Generate tests for a selection               |
 | `POST /v1/index`         | Index (or re-index) a workspace              |
-| `POST /v1/search`        | FTS5 repository search                       |
+| `POST /v1/search`        | FTS5 repository search (+ optional weighted rerank)|
+| `POST /v1/decide`        | Typed weighted decisions (System One, free)  |
+| `GET /v1/decide/backends`| Decision backends and their cost             |
 | `POST /v1/patch/preview` | Apply a patch in-memory, return a diff       |
 | `POST /v1/patch/apply`   | Apply a patch to disk (requires confirmation)|
 
 Per-endpoint details: `docs/api.md`.
+
+## System One decisions (free by default)
+
+`core/system_one` adopts the contract of TypeSafe AI's **Jev** ("System One"
+model — typed `choice` / `score` / `noul` questions answered against a state
+with probability distributions and a confidence) and serves it with **free,
+offline backends by default**: the `deterministic` backend is pure
+IDF-weighted arithmetic — reproducible, no model, no network, no key — and the
+`local` backend blends verdicts from the on-device 1.5B model into the same
+shape, degrading gracefully when llama.cpp is down. The billed hosted Jev API
+is opt-in only (`FORGECODER_SYSTEM_ONE_ALLOW_PAID=1` plus a key).
+
+```powershell
+pip install -e ".[jev]"          # installs the wheel on Python 3.14+; on
+                                 # older interpreters core.system_one
+                                 # provides the identical API for free
+
+# one decision from a shell, free:
+'{"state": "build failed", "questions": {"gate": {"type": "noul",
+ "instructions": "Is this a failure?"}}}' | .venv\Scripts\forge-decide.exe
+```
+
+```python
+from core.system_one import Decider, NoulQuestion, combine, gate
+
+decider = Decider()                      # deterministic: offline, reproducible
+decision = decider.decide(
+    {"build": "failed", "log": "AssertionError in test_user_lookup"},
+    {"risky": NoulQuestion(instructions="Is this state risky?")},
+)
+if gate(decision.answers["risky"], threshold=0.7):
+    ...                                   # branch on a number, not prose
+```
+
+Retrieval rides the same layer: `POST /v1/search` with `"weighted": true`
+blends heuristic scores with System One relevance levels (default weight
+`0.35`, deterministic offline arithmetic). Full guide: `docs/system-one.md`.
 
 ## Hardware profile
 

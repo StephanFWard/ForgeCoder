@@ -145,6 +145,90 @@ Incremental; returns `{ "ok": true, "added": 1, "updated": 0, "unchanged": 99,
 }
 ```
 
+**Weighted rerank** — add `"weighted": true` to blend the heuristic score with
+System One relevance answers (free, offline by default; see
+`docs/system-one.md`):
+
+```json
+{ "query": "authentication bug", "workspace": "C:\\Projects\\MyApp",
+  "weighted": true, "system_one_weight": 0.35 }
+```
+
+```json
+{
+  "ok": true,
+  "weighted": true,
+  "backend": "deterministic",
+  "results": [
+    { "path": "src/auth/Login.java", "language": "java", "content": "...",
+      "start_line": 12, "end_line": 45,
+      "score": 120, "weighted_score": 0.78,
+      "system_one": 0.83, "system_one_confidence": 0.61 }
+  ]
+}
+```
+
+`backend` names the decision backend that produced the weights. `score` keeps
+the plain heuristic value; `weighted_score`, `system_one` and
+`system_one_confidence` are the blended 0..1 score, the expected relevance
+level, and the top probability. Ordering is by `weighted_score` with the
+original order as tie-break, so results are stable across runs.
+
+## Decisions (System One, free by default)
+
+### `POST /v1/decide`
+
+Answers typed questions about a state — the same request/response contract as
+the hosted Jev API, served locally by free backends (see
+`docs/system-one.md`):
+
+```json
+{
+  "state": "the build failed with a null pointer in UserService:45",
+  "questions": {
+    "stage": {
+      "type": "choice",
+      "instructions": "Which pipeline stage failed?",
+      "criteria": {"build": "compilation or packaging error",
+                   "test": "a test assertion failed"}
+    },
+    "risky": {
+      "type": "noul",
+      "instructions": "Should this be treated as risky?",
+      "criteria": {"true": "blocking rule fired", "false": "no blocking evidence"}
+    }
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "model": "forge-system-one-deterministic",
+  "backend": "deterministic",
+  "free": true,
+  "answers": {
+    "stage": { "type": "choice", "choice": "build", "confidence": 0.71,
+               "probabilities": {"build": 0.71, "test": 0.29} },
+    "risky": { "type": "noul", "noul": 0.83 }
+  },
+  "usage": { "input_tokens": 88, "output_tokens": 0, "cost_usd": 0.0 }
+}
+```
+
+Optional request fields: `"backend"` — `deterministic` (default), `local`
+(free, uses the on-device model), `auto`, or `jev` (**paid**; additionally
+needs `FORGECODER_SYSTEM_ONE_ALLOW_PAID=1` and a `JEV_API_KEY`, otherwise it
+returns `{ "ok": false, "error": ... }` with the backend catalog).
+
+### `GET /v1/decide/backends`
+
+```json
+{ "ok": true, "default": "deterministic", "allow_paid": false, "backends": [...] }
+```
+
 ## Patches
 
 ### `POST /v1/patch/preview`

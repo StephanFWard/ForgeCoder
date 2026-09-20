@@ -483,3 +483,115 @@ def test_git_changes_untracked_only_is_insufficient_context(client, workspace, f
     assert body["review_status"] == "insufficient_context"
     assert body["findings"] == []
     assert "Untracked file contents are not included in Git diffs." in body["review"]
+
+
+# ---------------------------------------------------------------------------
+# System One decisions (Jev-shaped, free by default)
+# ---------------------------------------------------------------------------
+
+_DECIDE_PAYLOAD = {
+    "state": "The chunk ranking is wrong; rewrite the retrieval index.",
+    "questions": {
+        "area": {
+            "type": "choice",
+            "instructions": "Which area does this request touch?",
+            "criteria": {
+                "retrieval": "search index ranking of chunks",
+                "inference": "llama cpp model generation",
+                "patching": "diff apply file edits",
+            },
+        },
+        "urgency": {
+            "type": "score",
+            "instructions": "How urgent is this?",
+            "criteria": ["routine", "today", "urgent", "critical"],
+        },
+        "escalate": {"type": "noul", "instructions": "Escalate to a human now?"},
+    },
+}
+
+
+def test_decide_endpoint_answers_locally_and_free(client):
+    body = client.post("/v1/decide", json=_DECIDE_PAYLOAD).json()
+
+    assert body["ok"] is True
+    assert body["backend"] == "deterministic"
+    assert body["free"] is True
+    assert body["usage"]["cost_usd"] == 0.0
+    assert body["answers"]["area"]["choice"] == "retrieval"
+    assert abs(sum(body["answers"]["area"]["probabilities"].values()) - 1.0) < 1e-6
+    assert 0.0 <= body["answers"]["escalate"]["noul"] <= 1.0
+    assert 0.0 <= body["answers"]["urgency"]["score"] <= 3.0
+
+
+def test_decide_is_reproducible_over_http(client):
+    first = client.post("/v1/decide", json=_DECIDE_PAYLOAD).json()
+    second = client.post("/v1/decide", json=_DECIDE_PAYLOAD).json()
+    assert first["answers"] == second["answers"]
+
+
+def test_decide_backends_endpoint_marks_the_paid_backend(client):
+    body = client.get("/v1/decide/backends").json()
+    catalog = {entry["name"]: entry for entry in body["backends"]}
+    assert body["default"] == "deterministic"
+    assert catalog["deterministic"]["free"] is True
+    assert catalog["jev"]["free"] is False
+    # The paid backend is not implicitly allowed, whatever keys exist locally.
+    assert body["allow_paid"] is False
+
+
+def test_decide_refuses_the_paid_backend_without_the_opt_in(client):
+    payload = {**_DECIDE_PAYLOAD, "backend": "jev"}
+    body = client.post("/v1/decide", json=payload).json()
+    assert body["ok"] is False
+    assert "billed per token" in body["error"]
+
+
+def test_decide_rejects_an_unknown_backend(client):
+    body = client.post("/v1/decide", json={**_DECIDE_PAYLOAD, "backend": "magic"}).json()
+    assert body["ok"] is False
+    assert "unknown backend" in body["error"]
+
+
+def test_decide_local_backend_uses_the_local_model(client, fake_inference, monkeypatch):
+    async def verdict(messages, **kwargs):
+        return '{"choice": "patching", "confidence": 0.9}'
+
+    monkeypatch.setattr(fake_inference, "chat", verdict)
+    body = client.post("/v1/decide", json={**_DECIDE_PAYLOAD, "backend": "local"}).json()
+
+    assert body["ok"] is True
+    assert body["backend"] == "local"
+    assert body["free"] is True
+    assert body["answers"]["area"]["choice"] == "patching"
+
+
+def test_decide_local_backend_degrades_when_the_model_is_offline(client, fake_inference, monkeypatch):
+    async def offline(messages, **kwargs):
+        raise RuntimeError("llama.cpp is not running")
+
+    monkeypatch.setattr(fake_inference, "chat", offline)
+    body = client.post("/v1/decide", json={**_DECIDE_PAYLOAD, "backend": "local"}).json()
+
+    assert body["ok"] is True
+    assert body["answers"]["area"]["choice"] == "retrieval"  # deterministic verdict
+
+
+def test_search_weighted_mode_adds_system_one_weights(indexed_client, workspace):
+    query = "Service"
+    plain = indexed_client.post("/v1/search", json={"query": query, "workspace": str(workspace)}).json()
+    weighted = indexed_client.post(
+        "/v1/search", json={"query": query, "workspace": str(workspace), "weighted": True}
+    ).json()
+
+    assert plain["weighted"] is False
+    assert weighted["weighted"] is True
+    assert weighted["backend"] == "deterministic"
+    assert weighted["results"], "the indexed workspace must match"
+    for row in weighted["results"]:
+        assert 0.0 <= row["weighted_score"] <= 1.0
+        assert 0.0 <= row["system_one"] <= 1.0
+        assert 0.0 <= row["system_one_confidence"] <= 1.0
+    # Same candidate set; the weighted path may only reorder it.
+    assert {row["path"] for row in weighted["results"]} <= {row["path"] for row in plain["results"]}
+
