@@ -153,6 +153,28 @@ with `w = system_one_weight` (default `0.35`). Each row gains `weighted_score`,
 With the default backend the whole rerank is offline arithmetic — the same
 candidates and query always produce the same order.
 
+## Intent gate: is this a code-change task at all? (`core/agent/intent.py`)
+
+Retrieval rides the same layer, and so does routing. Before framing a chat
+turn as an edit task, ForgeCoder asks the System One layer one `noul` question
+("Is this user message a request to change, fix, or create code or files?").
+The answer is a weighted blend of a deterministic lexical prior and the System
+One verdict — with a llama.cpp server the free on-device model gives the
+meaning-level verdict (blended over the deterministic distribution), without
+one the deterministic backend answers lexically:
+
+```
+weighted = (1 - w) * heuristic + w * system_one     (w = 0.6, threshold 0.5)
+```
+
+Below the line the turn gets **no task frame at all** — no edit bounds, no
+"which file?" / "name the acceptance command" unknowables — and a system note
+tells the model to answer the question in prose. This is the fix for plain
+questions ("Is a hot dog a sandwich?") that used to come back as fabricated
+`[warn]` rule echoes. The decision rides in the `/v1/chat` `context` event as
+`intent` so it is inspectable client-side; it never raises and degrades to the
+heuristic prior when no backend can answer.
+
 ## Endpoints and CLI
 
 | Surface                         | Purpose                                        |

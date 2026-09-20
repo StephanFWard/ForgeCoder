@@ -79,7 +79,7 @@ class ContextBuilder:
 
     def build(self, message: str, *, workspace: str | None = None, file: str | None = None,
               selection: tuple[int, int] | None = None, budget: int = 4096,
-              behavior: str = "chat") -> BuiltContext:
+              behavior: str = "chat", code_change: bool | None = None) -> BuiltContext:
         """Assemble a prompt context for one user message.
 
         The system prompt is the behavior prompt plus the rules that behavior is
@@ -88,6 +88,14 @@ class ContextBuilder:
         current-file and repository evidence. ``receipts`` and ``file_lines``
         record the sources the turn really contained, so a reply can be scored
         against them and a patch's line anchors verified before it is previewed.
+
+        ``code_change`` is the System One intent gate's verdict
+        (:mod:`core.agent.intent`). ``False`` means the message is a plain
+        question, not an edit task, so no task frame is derived — a frame's
+        "no acceptance command was stated" unknowables are what once made
+        "is a hot dog a sandwich?" come back as a ``[warn]`` rule echo instead
+        of an answer. ``None`` keeps the frame-everything behavior for the
+        explicit edit/fix/test endpoints.
         """
         system = system_prompt(behavior)
         sections: list[dict] = []
@@ -138,22 +146,36 @@ class ContextBuilder:
         # bounded to the files it will create instead of being interrogated
         # with "which file?" — asking is what made it reply with ask-dont-guess
         # warnings instead of a game.
-        creation: list[str] | None = None
-        if active_path is None and is_creation_request(message):
-            creation = creation_targets(message)
-        contract = build_contract(
-            message, file=active_path, evidence_paths=[c["path"] for c in supplied],
-            creation_targets=creation,
-        )
-        frame = build_frame(
-            message, file=active_path, selection=selection,
-            evidence=supplied, contract=contract, file_lines=file_lines,
-            creation_targets=creation,
-        )
+        frame: TaskFrame | None = None
+        contract: ScopeContract | None = None
+        if code_change is False:
+            # Conversational question: no edit bounds, no unknowables, no
+            # acceptance evidence — nothing for the model to echo back as a
+            # fabricated rule warning. Answer the question, that is all.
+            system += (
+                "\n\nThis message is a question or discussion, not a code-change "
+                "task: answer it directly and briefly in prose. Do not produce "
+                "patches and do not ask which file to edit — there is nothing "
+                "to edit."
+            )
+        else:
+            creation: list[str] | None = None
+            if active_path is None and is_creation_request(message):
+                creation = creation_targets(message)
+            contract = build_contract(
+                message, file=active_path, evidence_paths=[c["path"] for c in supplied],
+                creation_targets=creation,
+            )
+            frame = build_frame(
+                message, file=active_path, selection=selection,
+                evidence=supplied, contract=contract, file_lines=file_lines,
+                creation_targets=creation,
+            )
         request = message
-        frame_text = render_task_frame(frame)
-        if frame_text:
-            request = f"{message}\n\n{frame_text}" if message else frame_text
+        if frame is not None:
+            frame_text = render_task_frame(frame)
+            if frame_text:
+                request = f"{message}\n\n{frame_text}" if message else frame_text
 
         receipts = [{"path": c["path"], "start_line": c["start_line"], "end_line": c["end_line"]}
                     for c in supplied]

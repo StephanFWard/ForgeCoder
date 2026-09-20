@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
 from core.agent.creation import is_creation_request
+from core.agent.intent import classify_intent
 from core.inference.chat import build_chat_messages
 from core.inference.verify import verify_output
 from core.retrieval.adaptive import classify_query
@@ -76,6 +77,15 @@ async def chat(req: ContextRequest, state: AppState = Depends(get_state)) -> Str
     """
     if is_creation_request(req.message):
         return await _chat_creation(req, state)
+
+    # System One intent gate (free): is this a code-change task at all? A
+    # plain question must be answered, not framed — the edit frame's
+    # unknowables ("no acceptance command was stated; ...") are what came back
+    # as fabricated "[warn]" lines when users asked "Is a hot dog a sandwich?".
+    intent = await classify_intent(
+        req.message, client=state.inference,
+        has_file=bool(req.file), has_selection=bool(req.selection),
+    )
     builder = ContextBuilder(state.index)
     built = builder.build(
         req.message,
@@ -83,6 +93,7 @@ async def chat(req: ContextRequest, state: AppState = Depends(get_state)) -> Str
         file=req.file,
         selection=req.selection.as_tuple() if req.selection else None,
         budget=state.config.max_chat_context,
+        code_change=intent.code_change,
     )
 
     history_budget = max(200, state.config.max_chat_context - max(built.total_tokens, 0) - 500)
@@ -107,7 +118,8 @@ async def chat(req: ContextRequest, state: AppState = Depends(get_state)) -> Str
 
     async def event_stream() -> AsyncIterator[str]:
         yield _sse({"type": "context", "total_tokens": built.total_tokens,
-                    "sections": [s["type"] for s in built.sections]})
+                    "sections": [s["type"] for s in built.sections],
+                    "intent": intent.to_dict()})
         try:
             async for delta in state.inference.chat_stream(
                 messages, temperature=0.3, max_tokens=1024,

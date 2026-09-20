@@ -6,6 +6,30 @@ adheres to **0.x** versioning until 1.0.
 
 ## [Unreleased]
 
+### Fixed — plain questions are answered instead of framed as edit tasks
+
+- "Is a hot dog a sandwich?" used to get the full edit task frame, whose
+  unknowables ("no acceptance command was stated; name the command that proves
+  the change") the 1.5B model echoed back as a fabricated
+  ``[warn] no-unverified-test-claims`` line instead of answering. Root cause:
+  nothing decided *whether a chat message is a code-change task at all* — the
+  frame layer had a creation escape hatch but no conversational one.
+- New intent gate (`core/agent/intent.py`): one System One ``noul`` question
+  ("Is this user message a request to change, fix, or create code or files?"),
+  blended as `(1-w)·heuristic + w·system_one` (`w = 0.6`, threshold `0.5`).
+  The deterministic part is a pinned, reproducible prior (interrogative form,
+  edit verbs, code/file tokens); the System One part uses the free `local`
+  backend when llama.cpp is up — so the Jev layer and the Qwen model decide
+  together — and degrades to the deterministic/heuristic view when it is down.
+- `POST /v1/chat` consults the gate before building context: below the line
+  the turn carries **no task frame** (no edit bounds, no unknowables) plus a
+  system note to answer in prose; the decision is reported in the SSE
+  `context` event as `intent`. Explicit edit/fix/test endpoints keep their
+  frames unchanged.
+- 14 new unit tests (`tests/unit/test_intent.py`): the hot-dog question routes
+  to conversation, real edit requests keep their task frame, the model verdict
+  moves the blend, and a downed model degrades without misrouting.
+
 ### Added — System One decision layer (Jev-shaped, free by default)
 
 - New `core/system_one/` package: typed `choice` / `score` / `noul` questions
