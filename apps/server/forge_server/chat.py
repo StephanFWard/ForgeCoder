@@ -8,6 +8,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
+from core.agent.confidence import answer_confidence, format_probability
 from core.agent.creation import is_creation_request
 from core.agent.intent import classify_intent
 from core.inference.chat import build_chat_messages
@@ -116,10 +117,21 @@ async def chat(req: ContextRequest, state: AppState = Depends(get_state)) -> Str
     system = built.system + f"\n\nToday's date: {datetime.now():%Y-%m-%d (%A)}."
     messages = build_chat_messages(system, request_text, history)
 
+    # The statistical probability that opens every answer: how confident the
+    # System One layer is that this turn is answerable from what was supplied.
+    confidence = await answer_confidence(
+        req.message, truncate_to_tokens(context_turn_text(built), 2600),
+        client=state.inference,
+    )
+    marker = format_probability(confidence.probability)
+
     async def event_stream() -> AsyncIterator[str]:
         yield _sse({"type": "context", "total_tokens": built.total_tokens,
                     "sections": [s["type"] for s in built.sections],
-                    "intent": intent.to_dict()})
+                    "intent": intent.to_dict(),
+                    "confidence": confidence.to_dict()})
+        # The probability leads the answer so accuracy is visible first.
+        yield _sse({"type": "delta", "content": f"{marker}\n\n"})
         try:
             async for delta in state.inference.chat_stream(
                 messages, temperature=0.3, max_tokens=1024,
@@ -241,7 +253,15 @@ async def ask(req: ContextRequest, state: AppState = Depends(get_state)) -> dict
         )
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
-    return {"ok": True, "answer": answer, "context_tokens": built.total_tokens}
+    # The probability leads the answer so accuracy is visible first.
+    confidence = await answer_confidence(req.message, truncate_to_tokens(context_text, 2600),
+                                         client=state.inference)
+    return {
+        "ok": True,
+        "answer": f"{format_probability(confidence.probability)}\n\n{answer}",
+        "probability": round(confidence.probability, 6),
+        "context_tokens": built.total_tokens,
+    }
 
 
 def _build_user_turn(built) -> str:
@@ -251,3 +271,9 @@ def _build_user_turn(built) -> str:
         if section["type"] in {"repository", "file"}:
             total += "\n\n" + section["text"]
     return truncate_to_tokens(total, 3800)
+
+
+def context_turn_text(built) -> str:
+    """Evidence-only text — the state the answer-confidence question is asked over."""
+    return "\n\n".join(
+        s["text"] for s in built.sections if s["type"] in {"repository", "file"})

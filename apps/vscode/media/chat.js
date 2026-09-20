@@ -117,12 +117,45 @@
       : 'Plan & Act mode off.');
   });
 
+  function formatConfidence(msg) {
+    if (typeof msg.probability !== 'number') {
+      return 'confidence: n/a';
+    }
+    const pct = (msg.probability * 100).toFixed(1) + '%';
+    const where = msg.backend ? ' · ' + msg.backend : '';
+    const cost = msg.free === false ? ' · paid' : ' · free';
+    let parts = '';
+    if (msg.parts && typeof msg.parts === 'object') {
+      const entries = Object.entries(msg.parts).slice(0, 4)
+        .map(function ([k, v]) { return k + ' ' + (Number(v) * 100).toFixed(0) + '%'; });
+      if (entries.length) {
+        parts = ' (' + entries.join(' · ') + ')';
+      }
+    }
+    return 'p=' + pct + where + cost + parts;
+  }
+
   window.addEventListener('message', function (event) {
     const msg = event.data;
     switch (msg.command) {
       case 'userMessage':
         addMessage('user', msg.content);
         break;
+      case 'confidence': {
+        // Statistical probability badge: rendered above the answer, pinned to
+        // the top of the pending assistant bubble so accuracy is stated first.
+        const badge = document.createElement('div');
+        badge.className = 'confidence';
+        badge.textContent = formatConfidence(msg);
+        badge.title = 'System One answer-confidence: probability the turn is answerable from its evidence.';
+        if (currentAssistant) {
+          currentAssistant.prepend(badge);
+        } else {
+          messages.appendChild(badge);
+        }
+        messages.scrollTop = messages.scrollHeight;
+        break;
+      }
       case 'assistantStart': {
         currentAssistant = addMessage('assistant', '');
         const cursor = document.createElement('span');

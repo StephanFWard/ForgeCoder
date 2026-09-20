@@ -14,10 +14,22 @@ export interface ChatTurn {
   history?: Array<{ role: string; content: string }>;
 }
 
+export interface AnswerConfidenceReceipt {
+  type?: string;
+  probability: number;
+  parts?: Record<string, number>;
+  weights?: Record<string, number>;
+  backend?: string;
+  model?: string;
+  free?: boolean;
+}
+
 export interface ChatContextEvent extends SseEvent {
   type: 'context';
   total_tokens: number;
   sections: string[];
+  confidence?: AnswerConfidenceReceipt;
+  intent?: { code_change: boolean; probability: number };
 }
 export interface ChatDeltaEvent extends SseEvent {
   type: 'delta';

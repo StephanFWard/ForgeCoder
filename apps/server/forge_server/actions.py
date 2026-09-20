@@ -11,6 +11,7 @@ import json
 from fastapi import APIRouter, Depends
 
 from core.agent import RuleContext, RuleReport, load_rules, render_task_frame, run_rules
+from core.agent.confidence import answer_confidence, format_probability
 from core.inference.chat import build_chat_messages
 from core.inference.client import InferenceError
 from core.patching.contracts import EDIT_SCHEMA, FIX_SCHEMA
@@ -91,13 +92,30 @@ def _score(behavior: str, built: BuiltContext, text: str, patches: list) -> Rule
     return run_rules(load_rules(), ctx)
 
 
+def _evidence_text(built: BuiltContext) -> str:
+    """Evidence-only text — the state the answer-confidence question is asked over."""
+    return "\n\n".join(s["text"] for s in built.sections)
+
+
+async def _confidence(req: ActionRequest, built: BuiltContext, state: AppState):
+    """System One probability that this turn is answerable from its evidence."""
+    message = req.message or req.instruction or ""
+    return await answer_confidence(message, _evidence_text(built), client=state.inference)
+
+
 @router.post("/explain")
 async def explain(req: ActionRequest, state: AppState = Depends(get_state)) -> dict:
     try:
-        text, _ = await _run(state, req, "chat")
+        text, built = await _run(state, req, "chat")
     except InferenceError as exc:
         return {"ok": False, "error": str(exc)}
-    return {"ok": True, "explanation": text}
+    confidence = await _confidence(req, built, state)
+    return {
+        "ok": True,
+        # The probability leads the answer so accuracy is visible first.
+        "explanation": f"{format_probability(confidence.probability)}\n\n{text}",
+        "probability": round(confidence.probability, 6),
+    }
 
 
 @router.post("/tests")
@@ -105,10 +123,15 @@ async def tests(req: ActionRequest, state: AppState = Depends(get_state)) -> dic
     if not req.code and not req.file:
         return {"ok": False, "error": "Provide code or a file to generate tests for"}
     try:
-        text, _ = await _run(state, req, "test")
+        text, built = await _run(state, req, "test")
     except InferenceError as exc:
         return {"ok": False, "error": str(exc)}
-    return {"ok": True, "tests": text}
+    confidence = await _confidence(req, built, state)
+    return {
+        "ok": True,
+        "tests": f"{format_probability(confidence.probability)}\n\n{text}",
+        "probability": round(confidence.probability, 6),
+    }
 
 
 @router.post("/edit")
@@ -125,9 +148,11 @@ async def edit(req: ActionRequest, state: AppState = Depends(get_state)) -> dict
     if report.blocked:
         return {"ok": False, "reason": "rule_violation",
                 "findings": [f.to_dict() for f in report.findings]}
+    confidence = await _confidence(req, built, state)
     return {
         "ok": True,
-        "summary": payload.get("summary", ""),
+        "summary": f"{format_probability(confidence.probability)} {payload.get('summary', '')}",
+        "probability": round(confidence.probability, 6),
         "patches": [{"path": p.path, "operations": [o.__dict__ for o in p.operations]} for p in patches],
         "review": report.to_dict(),
     }
@@ -149,9 +174,11 @@ async def fix(req: ActionRequest, state: AppState = Depends(get_state)) -> dict:
     if report.blocked:
         return {"ok": False, "reason": "rule_violation",
                 "findings": [f.to_dict() for f in report.findings]}
+    confidence = await _confidence(req, built, state)
     return {
         "ok": True,
-        "summary": payload.get("summary", ""),
+        "summary": f"{format_probability(confidence.probability)} {payload.get('summary', '')}",
+        "probability": round(confidence.probability, 6),
         "diagnosis": payload.get("diagnosis", ""),
         "patches": [{"path": p.path, "operations": [o.__dict__ for o in p.operations]} for p in patches],
         "review": report.to_dict(),

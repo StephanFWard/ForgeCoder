@@ -1,4 +1,7 @@
 """Integration tests for the Forge API with a mocked inference backend."""
+from __future__ import annotations
+
+import json
 
 
 def test_chat_creation_request_returns_patch_event(client, workspace):
@@ -162,6 +165,32 @@ def test_explain_action(client, workspace):
     body = resp.json()
     assert body["ok"] is True
     assert "Fake explanation" in body["explanation"]
+    # The statistical probability opens the answer and is reported alongside.
+    assert body["explanation"].startswith("[p=")
+    assert 0.0 <= body["probability"] <= 1.0
+
+
+def test_chat_probability_leads_the_answer(client, workspace):
+    payload = {
+        "message": "Why does get return null?",
+        "workspace": str(workspace),
+        "file": "src/service.py",
+    }
+    with client.stream("POST", "/v1/chat", json=payload) as resp:
+        lines = "".join(resp.iter_text())
+    # First delta is the probability marker; the context event carries the
+    # full System One receipt (probability, parts, backend, free).
+    assert "[p=" in lines
+    assert '"confidence"' in lines
+    assert '"probability"' in lines
+
+
+def test_ask_probability_leads_the_answer(client):
+    resp = client.post("/v1/ask", json={"message": "What does Service.get do?"})
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["answer"].startswith("[p=")
+    assert 0.0 <= body["probability"] <= 1.0
 
 
 def test_fix_returns_fallback_when_not_json(client, workspace):
@@ -182,6 +211,9 @@ def test_code_actions_use_behavior_prompt_and_context(client, workspace, fake_in
     captured: dict = {}
 
     async def fake_chat(messages, **kwargs):
+        # System One answer-confidence calls are typed verdicts, not actions.
+        if "QUESTION:" in messages[-1]["content"]:
+            return json.dumps({"yes": True, "confidence": 0.9})
         captured["messages"] = messages
         return "ok"
 
@@ -220,6 +252,9 @@ def test_edit_instruction_preview_and_local_apply(client, workspace, fake_infere
     ]}
 
     async def fake_chat(messages, **kwargs):
+        # System One answer-confidence calls are typed verdicts, not actions.
+        if "QUESTION:" in messages[-1]["content"]:
+            return json.dumps({"yes": True, "confidence": 0.9})
         # The behavior prompt rides first; the inline rule block follows it.
         assert messages[0]["content"].startswith(load_prompt("edit"))
         assert "OPERATING RULES" in messages[0]["content"]
@@ -357,6 +392,9 @@ def test_edit_and_fix_are_schema_constrained(client, workspace, fake_inference, 
     seen = []
 
     async def fake_chat(messages, **kwargs):
+        # System One answer-confidence calls are typed verdicts, not actions.
+        if "QUESTION:" in messages[-1]["content"]:
+            return json.dumps({"yes": True, "confidence": 0.9})
         seen.append(kwargs.get("schema"))
         return json.dumps({
             "summary": "Added validation.",

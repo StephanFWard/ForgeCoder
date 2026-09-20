@@ -287,7 +287,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     let full = '';
     try {
       await this.api.chatStream(turn, (ev) => {
-        if (ev.type === 'delta') {
+        if (ev.type === 'context') {
+          // The statistical probability that opens every answer: surface the
+          // System One receipt (p, backend, parts) as a header badge, so the
+          // number is visible before a word of the answer streams in.
+          const receipt = (ev.confidence ?? {}) as Record<string, unknown>;
+          this.post('confidence', {
+            probability: typeof receipt.probability === 'number' ? receipt.probability : null,
+            backend: typeof receipt.backend === 'string' ? receipt.backend : undefined,
+            parts: typeof receipt.parts === 'object' ? receipt.parts : undefined,
+            free: typeof receipt.free === 'boolean' ? receipt.free : undefined,
+          });
+        } else if (ev.type === 'delta') {
           const delta = String(ev.content ?? '');
           full += delta;
           this.post('delta', { content: delta });
