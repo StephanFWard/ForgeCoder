@@ -193,6 +193,27 @@ def test_ask_probability_leads_the_answer(client):
     assert 0.0 <= body["probability"] <= 1.0
 
 
+def test_ask_question_prompt_has_no_rule_markers(client, fake_inference, monkeypatch):
+    """A plain question over /v1/ask must never show Qwen a rule slug or a
+    severity marker — that is what came back as "[warn] ask-dont-guess"
+    instead of an answer."""
+    seen: dict = {}
+
+    async def fake_chat(messages, **kwargs):
+        if "QUESTION:" in messages[-1]["content"]:
+            return json.dumps({"yes": False, "confidence": 0.95})
+        seen["system"] = messages[0]["content"]
+        return "Yes — a sandwich is a sandwich."
+
+    monkeypatch.setattr(fake_inference, "chat", fake_chat)
+    body = client.post("/v1/ask", json={"message": "Is a sandwich a sandwich?"}).json()
+    assert body["ok"] is True
+    assert "[warn]" not in body["answer"]
+    assert "ask-dont-guess" not in body["answer"]
+    assert "ask-dont-guess" not in seen["system"]
+    assert "[warn]" not in seen["system"]
+
+
 def test_fix_returns_fallback_when_not_json(client, workspace):
     """Without a JSON-constrained backend, /v1/fix must degrade gracefully."""
     resp = client.post(

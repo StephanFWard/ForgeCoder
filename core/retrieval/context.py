@@ -97,7 +97,13 @@ class ContextBuilder:
         of an answer. ``None`` keeps the frame-everything behavior for the
         explicit edit/fix/test endpoints.
         """
-        system = system_prompt(behavior)
+        effective_behavior = behavior
+        if behavior == "chat" and code_change is False:
+            # Plain conversation: no rule slugs or severity markers. A 1.5B
+            # model shown "[warn] ask-dont-guess" parrots it back as
+            # fabricated findings instead of answering the question.
+            effective_behavior = "answer"
+        system = system_prompt(effective_behavior)
         sections: list[dict] = []
         used = estimate_tokens(system) + estimate_tokens(message)
 

@@ -219,6 +219,15 @@ def _json_keys_for_intent(query_type: str) -> list[str] | None:
 @router.post("/ask")
 async def ask(req: ContextRequest, state: AppState = Depends(get_state)) -> dict:
     """Non-streaming chat (used by the MCP server and simple clients)."""
+    from core.agent.intent import classify_intent
+
+    # A plain question must never see rule slugs or severity markers: the
+    # intent gate routes it to the marker-free "answer" behavior, exactly as
+    # the streaming path does, so Qwen answers instead of echoing "[warn]".
+    intent = await classify_intent(
+        req.message, client=state.inference,
+        has_file=bool(req.file), has_selection=bool(req.selection),
+    )
     builder = ContextBuilder(state.index)
     built = builder.build(
         req.message,
@@ -226,6 +235,7 @@ async def ask(req: ContextRequest, state: AppState = Depends(get_state)) -> dict
         file=req.file,
         selection=req.selection.as_tuple() if req.selection else None,
         budget=state.config.max_chat_context,
+        code_change=intent.code_change,
     )
     context_text = "\n\n".join(s["text"] for s in built.sections)
     user = req.message

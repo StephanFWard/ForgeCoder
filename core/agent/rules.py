@@ -34,6 +34,16 @@ class Rule:
     check: str
     description: str
 
+    def plain_line(self) -> str:
+        """The rule as plain guidance: no slug, no severity marker.
+
+        System prompts for real work still use :meth:`one_line` (the rule
+        layer needs names to report against). Conversational turns use this:
+        a 1.5B model shown ``[warn] ask-dont-guess`` parrots the marker back
+        as its answer instead of answering the question.
+        """
+        return self.description
+
     def one_line(self) -> str:
         """The inline form carried by a system prompt (progressive disclosure)."""
         return f"[{self.severity}] {self.slug}: {self.description}"
@@ -65,8 +75,12 @@ DEFAULT_RULES: tuple[Rule, ...] = (
 
 # Which rules a behavior is told about inline. Everything else stays in the
 # router file, which keeps the prompt short enough for a 1.5B model to follow.
+# "answer" is deliberately empty: a conversational turn must never see rule
+# slugs or severity markers — a 1.5B model shown "[warn] ask-dont-guess"
+# parrots it back as its answer instead of answering the question.
 BEHAVIOR_RULES: dict[str, tuple[str, ...]] = {
     "chat": ("no-unverified-test-claims", "ask-dont-guess"),
+    "answer": (),
     "hierarchical-chat": ("no-unverified-test-claims", "ask-dont-guess"),
     "explain": ("no-unverified-test-claims", "ask-dont-guess"),
     "test": ("no-unverified-test-claims", "ask-dont-guess", "fresh-context-before-edit"),

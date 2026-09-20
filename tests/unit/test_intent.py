@@ -148,3 +148,31 @@ def test_context_builder_code_change_true_behaves_like_default():
     assert framed.frame is not None
     assert "TASK FRAME" in framed.request
 
+
+def test_question_system_prompt_has_no_rule_slugs_or_markers():
+    """A 1.5B model shown "[warn] ask-dont-guess" parrots it back as its
+    answer. A question turn must carry neither slugs nor markers."""
+    built = ContextBuilder().build(HOT_DOG, code_change=False)
+    assert "ask-dont-guess" not in built.system
+    assert "no-unverified-test-claims" not in built.system
+    assert "[warn]" not in built.system
+    assert "[block]" not in built.system
+    assert "OPERATING RULES" not in built.system
+    assert "answer" in built.system.lower()
+
+
+def test_chat_question_path_builds_marker_free_prompt():
+    """End to end for the streaming path: the intent gate routes the hot-dog
+    question to conversation, and the prompt Qwen sees has no markers."""
+    decision = classify_intent_sync(HOT_DOG, client=StubClient(yes=False))
+    assert decision.code_change is False
+    built = ContextBuilder().build(HOT_DOG, code_change=decision.code_change)
+    assert built.frame is None
+    assert "ask-dont-guess" not in built.system
+    assert "[warn]" not in built.system
+
+
+def test_task_system_prompt_keeps_its_rules():
+    framed = ContextBuilder().build(EDIT_REQUEST, code_change=True)
+    assert "ask-dont-guess" in framed.system
+
