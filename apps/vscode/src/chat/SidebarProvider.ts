@@ -344,7 +344,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           message: 'The model repeated its previous answer. Use Clear Chat or rephrase with more detail.',
         });
       }
-      this.history.push({ role: 'assistant', content: full });
+      // Never store our own [p=...] marker: it is a verdict about the turn,
+      // not evidence, and the server strips it anyway before the next call.
+      const stored = full.replace(/^\[p=[\d.]+\]\s*/, '');
+      this.history.push({ role: 'assistant', content: stored || full });
     }
     this.history = this.history.slice(-12);
     this.streaming = false;

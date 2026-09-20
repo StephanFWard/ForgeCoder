@@ -83,3 +83,53 @@ def test_marker_matches_the_probability():
     decision = answer_confidence_sync("why does this return null?",
                                       "return self.store.get(key)")
     assert format_probability(decision.probability).startswith("[p=")
+
+
+def test_tautology_is_100_percent_yes():
+    decision = answer_confidence_sync("Is a sandwich a sandwich?")
+    assert decision.probability == 1.0
+    assert format_probability(decision.probability) == "[p=1.00]"
+    assert decision.backend == "tautology"
+    assert decision.free is True
+
+
+def test_tautology_holds_with_a_client_and_with_history_present():
+    # The identity rule fires before any backend, so neither a model verdict
+    # nor a previous turn's statistics can dilute it.
+    decision = answer_confidence_sync("Is a sandwich a sandwich?",
+                                      "previous answer had p=0.23",
+                                      client=StubClient(yes=False, confidence=0.99))
+    assert decision.probability == 1.0
+
+
+def test_tautology_does_not_catch_near_misses():
+    assert answer_confidence_sync("Is a hot dog a sandwich?").probability < 1.0
+    assert answer_confidence_sync("What is a sandwich?").probability < 1.0
+
+
+def test_consecutive_questions_each_get_fresh_statistics():
+    # Regression: statistics must be recomputed between questions, never
+    # carried over — answering one question must not move the next one's p.
+    first = answer_confidence_sync("Is a sandwich a sandwich?")
+    second = answer_confidence_sync("xqz blorpt fnord wumpus quux?")
+    third = answer_confidence_sync("Is a sandwich a sandwich?")
+    assert first.probability == third.probability == 1.0
+    assert second.probability < 1.0
+
+
+def test_history_sanitizer_strips_markers_and_verdicts():
+    from core.inference.chat import sanitize_history
+
+    history = [
+        {"role": "user", "content": "Is a hot dog a sandwich?"},
+        {"role": "assistant", "content": "[p=0.23]\n\nYes, sort of."},
+        {"role": "assistant", "content": '{"yes": true, "confidence": 0.9}'},
+        {"role": "user", "content": "Is a sandwich a sandwich?"},
+        {"role": "user", "content": "Is a sandwich a sandwich?"},
+    ]
+    cleaned = sanitize_history(history)
+    texts = [m["content"] for m in cleaned]
+    assert not any(t.startswith("[p=") for t in texts)
+    assert not any(t.startswith('{"yes"') for t in texts)
+    assert texts.count("Is a sandwich a sandwich?") == 1
+    assert "Yes, sort of." in texts

@@ -17,6 +17,7 @@ admitting up front that the answer may need evidence the turn did not have.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,10 +29,36 @@ from core.system_one.primitives import NoulAnswer, NoulQuestion, state_text
 # 0.5 prior (there is no cheap lexical prior for "is the evidence sufficient").
 SYSTEM_ONE_WEIGHT = 0.6
 
+# Words stripped when comparing a question's subject to its predicate.
+_SUBJECT_STOPWORDS = frozenset({
+    "a", "an", "the", "this", "that", "these", "those", "my", "your", "his",
+    "her", "its", "our", "their", "some", "any", "each", "every", "no",
+})
+_IDENTITY_LEADERS = frozenset({"is", "are", "was", "were"})
+
+
+def _identity_subject(message: str) -> str | None:
+    """Subject of an "Is X a X?" style tautology, else None.
+
+    One rule, checked before any model call: a question whose subject equals
+    its own predicate ("Is a sandwich a sandwich?") is answered by the meaning
+    of its own words, so the confidence must be 1.0 — not a lexical overlap
+    score, and never something a previous turn's statistics can dilute.
+    """
+    words = re.findall(r"[A-Za-z]+", message.lower())
+    if len(words) < 3 or words[0] not in _IDENTITY_LEADERS:
+        return None
+    core = [w for w in words[1:] if w not in _SUBJECT_STOPWORDS]
+    if len(core) >= 2 and core[0] == core[-1]:
+        return core[0]
+    return None
+
 ANSWER_QUESTION = NoulQuestion(
     instructions="Can this user message be answered accurately from the information supplied?",
     criteria={
-        "true": "the supplied context contains enough correct evidence to answer accurately",
+        "true": ("the message is answerable: it is a tautology or definition true by "
+                 "the meaning of its own words, or the supplied context holds the "
+                 "evidence needed for an accurate answer"),
         "false": "an accurate answer would need information that was not supplied",
     },
 )
@@ -91,8 +118,23 @@ def _state(message: str, context_text: str) -> str:
 
 async def answer_confidence(message: str, context_text: str = "",
                             *, client: Any = None) -> AnswerConfidence:
-    """System One probability that the message is answerable from the context."""
-    decider = Decider(backend="local" if client is not None else None, client=client)
+    """System One probability that the message is answerable from the context.
+
+    Fresh per question: the state is rebuilt from *this* message and *this*
+    turn's evidence, so no previous turn's statistics can leak in. A tautology
+    ("Is a sandwich a sandwich?") short-circuits to 1.0 before any backend —
+    it is answered by the meaning of its own words.
+    """
+    subject = _identity_subject(message)
+    if subject is not None:
+        return AnswerConfidence(probability=1.0, parts={"tautology": 1.0},
+                                weights={"tautology": 1.0}, backend="tautology",
+                                model="forge-identity-rule", free=True)
+    if client is None:
+        # Free path, no model round-trip: per-question state, freshly decided.
+        answer = _deterministic_answer(message, context_text)
+        return _blend(answer, "deterministic", "forge-system-one-deterministic", True)
+    decider = Decider(backend="local", client=client)
     try:
         decision = await decider.adecide(_state(message, context_text), {"answer": ANSWER_QUESTION})
         answer = decision.answers["answer"]
@@ -100,13 +142,22 @@ async def answer_confidence(message: str, context_text: str = "",
             answer = NoulAnswer(noul=0.5)
         return _blend(answer, decision.backend, decision.model, decision.free)
     except (BackendUnavailable, OSError, RuntimeError, ValueError, TypeError, KeyError):
-        return _blend(NoulAnswer(noul=0.5), "heuristic-only", "none", True)
+        answer = _deterministic_answer(message, context_text)
+        return _blend(answer, "local", "forge-system-one-local-llama", True)
 
 
 def answer_confidence_sync(message: str, context_text: str = "",
                            *, client: Any = None) -> AnswerConfidence:
     """Synchronous twin of :func:`answer_confidence` (no running loop allowed)."""
-    decider = Decider(backend="local" if client is not None else None, client=client)
+    subject = _identity_subject(message)
+    if subject is not None:
+        return AnswerConfidence(probability=1.0, parts={"tautology": 1.0},
+                                weights={"tautology": 1.0}, backend="tautology",
+                                model="forge-identity-rule", free=True)
+    if client is None:
+        answer = _deterministic_answer(message, context_text)
+        return _blend(answer, "deterministic", "forge-system-one-deterministic", True)
+    decider = Decider(backend="local", client=client)
     try:
         decision = decider.decide(_state(message, context_text), {"answer": ANSWER_QUESTION})
         answer = decision.answers["answer"]
@@ -114,7 +165,17 @@ def answer_confidence_sync(message: str, context_text: str = "",
             answer = NoulAnswer(noul=0.5)
         return _blend(answer, decision.backend, decision.model, decision.free)
     except (BackendUnavailable, OSError, RuntimeError, ValueError, TypeError, KeyError):
-        return _blend(NoulAnswer(noul=0.5), "heuristic-only", "none", True)
+        answer = _deterministic_answer(message, context_text)
+        return _blend(answer, "local", "forge-system-one-local-llama", True)
+
+
+def _deterministic_answer(message: str, context_text: str) -> NoulAnswer:
+    """Answer the question without a model (free, reproducible, per-question)."""
+    decision = Decider().decide(_state(message, context_text), {"answer": ANSWER_QUESTION})
+    answer = decision.answers["answer"]
+    if not isinstance(answer, NoulAnswer):  # defensive: backend contract
+        return NoulAnswer(noul=0.5)
+    return answer
 
 
 __all__ = [

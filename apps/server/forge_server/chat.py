@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from core.agent.confidence import answer_confidence, format_probability
 from core.agent.creation import is_creation_request
 from core.agent.intent import classify_intent
-from core.inference.chat import build_chat_messages
+from core.inference.chat import build_chat_messages, sanitize_history
 from core.inference.verify import verify_output
 from core.retrieval.adaptive import classify_query
 from core.retrieval.budget import estimate_tokens, truncate_to_tokens
@@ -98,20 +98,8 @@ async def chat(req: ContextRequest, state: AppState = Depends(get_state)) -> Str
     )
 
     history_budget = max(200, state.config.max_chat_context - max(built.total_tokens, 0) - 500)
-    history: list[dict] = []
-    seen_history: set[str] = set()
-    for m in req.history[-8:]:
-        content = truncate_to_tokens(str(m.get("content", "")), 350)
-        role = "assistant" if m.get("role") == "assistant" else "user"
-        key = role + ":" + content
-        if not content or key in seen_history:
-            continue
-        cost = estimate_tokens(content)
-        if cost > history_budget:
-            break
-        history.append({"role": role, "content": content})
-        seen_history.add(key)
-        history_budget -= cost
+    history = sanitize_history(req.history, limit=8, per_turn=350)
+    history, history_budget = _fit_history(history, history_budget)
 
     request_text = _build_user_turn(built)
     system = built.system + f"\n\nToday's date: {datetime.now():%Y-%m-%d (%A)}."
@@ -277,3 +265,16 @@ def context_turn_text(built) -> str:
     """Evidence-only text — the state the answer-confidence question is asked over."""
     return "\n\n".join(
         s["text"] for s in built.sections if s["type"] in {"repository", "file"})
+
+
+def _fit_history(history: list[dict], budget: int) -> tuple[list[dict], int]:
+    """Clip sanitized history to the remaining token budget (newest kept)."""
+    kept: list[dict] = []
+    for turn in reversed(history):
+        cost = estimate_tokens(str(turn.get("content", "")))
+        if cost > budget:
+            break
+        kept.append(turn)
+        budget -= cost
+    kept.reverse()
+    return kept, budget
