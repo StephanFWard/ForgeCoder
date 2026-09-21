@@ -18,6 +18,8 @@
   let currentAssistant = null;
   let planMode = false;
   let currentPlan = null;
+  let pendingPatch = null;
+  let pendingMultiPatch = null;
 
   function addMessage(role, text) {
     const el = document.createElement('div');
@@ -205,6 +207,7 @@
       case 'pendingPatch':
         patchInfo.textContent = 'Patch ready for ' + msg.path;
         patchBar.classList.remove('hidden');
+        pendingPatch = { path: msg.path };
         break;
       case 'pendingMultiPatch':
         patchInfo.textContent = 'Patch ready for ' + msg.count + ' file(s) — review before applying.';

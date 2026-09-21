@@ -27,6 +27,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private history: Array<{ role: string; content: string }> = [];
   private streaming = false;
   private planMode = false;
+  private lastMessage: string = '';
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -262,96 +263,113 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private async send(message: string): Promise<void> {
-    if (this.streaming || !message.trim()) {
+    if (!message.trim()) {
       return;
     }
-    this.streaming = true;
+    this.history.push({ role: 'user', content: message });
     this.post('userMessage', { content: message });
-    this.post('assistantStart', {});
+    this.lastMessage = message;
 
-    const editor = vscode.window.activeTextEditor;
-    let workspace: string | undefined;
-    let turn: ChatTurn = { message, history: this.history };
-    if (editor) {
-      workspace = vscode.workspace.getWorkspaceFolder(editor.document.uri)?.uri.fsPath;
-      const file = workspace
-        ? vscode.workspace.asRelativePath(editor.document.uri, false).replace(/\\/g, '/')
-        : editor.document.uri.fsPath;
-      let selection: { start: number; end: number } | undefined;
-      if (!editor.selection.isEmpty) {
-        selection = { start: editor.selection.start.line + 1, end: editor.selection.end.line + 1 };
-      }
-      turn = { message, workspace, file, selection, history: this.history };
-    }
-
-    let full = '';
+    // Use the agent run endpoint - each function is its own agent
+    // The agent returns actions that drive UI behavior (view, diff, apply, etc.)
     try {
-      await this.api.chatStream(turn, (ev) => {
-        if (ev.type === 'context') {
-          // The statistical probability that opens every answer: surface the
-          // System One receipt (p, backend, parts) as a header badge, so the
-          // number is visible before a word of the answer streams in.
-          const receipt = (ev.confidence ?? {}) as Record<string, unknown>;
-          this.post('confidence', {
-            probability: typeof receipt.probability === 'number' ? receipt.probability : null,
-            backend: typeof receipt.backend === 'string' ? receipt.backend : undefined,
-            parts: typeof receipt.parts === 'object' ? receipt.parts : undefined,
-            free: typeof receipt.free === 'boolean' ? receipt.free : undefined,
-          });
-        } else if (ev.type === 'delta') {
-          const delta = String(ev.content ?? '');
-          full += delta;
-          this.post('delta', { content: delta });
-        } else if (ev.type === 'error') {
-          this.post('error', { message: String(ev.message) });
-        } else if (ev.type === 'patch') {
-          // Creation request: the server prepared new files — offer the
-          // standard review/apply bar instead of leaving them as prose.
-          const creates = (ev.creates ?? {}) as Record<string, string>;
-          const patches = (ev.patches ?? []) as FilePatch[];
-          if (Object.keys(creates).length || patches.length) {
-            this.pendingMultiPatch = {
-              workspace: workspace ?? '',
-              patches,
-              creates,
-              message: String(ev.message ?? ''),
-            };
-            this.pendingPatch = undefined;
-            this.reveal();
-            this.post('pendingMultiPatch', {
-              count: patches.length + Object.keys(creates).length,
-              paths: patches.map((p) => p.path).concat(Object.keys(creates)),
-            });
-          }
-        } else if (ev.type === 'done') {
-          this.post('assistantDone', {});
-        }
-      });
+      const rec = await this.api.runAgent(message);
+      if (!rec?.ok) {
+        this.post('error', { message: rec?.error ?? 'Unknown error' });
+        return;
+      }
+      // Agent-driven actions: the agent decides what UI actions to offer
+      await this.handleAgentResponse(rec);
     } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      this.post('error', {
-        message: `Cannot reach the Forge server. Start it with:\npython runtime\\scripts\\start_forge.py\n\n(${detail})`,
-      });
+      this.post('error', { message: String(err) });
+    }
+  }
+
+  /** Handle agent response - UI behavior driven by Recommendation.actions */
+  private async handleAgentResponse(rec: any): Promise<void> {
+    const actions = rec?.actions || [];
+    const patches = rec?.patches || [];
+    const multiPatches = rec?.multi_patches || null;
+    const creates = rec?.creates || {};
+    const steps = rec?.steps || null;
+
+    // Stream the response text if present
+    if (rec?.text || rec?.answer) {
+      this.post('assistantStart', {});
+      this.post('delta', { content: rec.text || rec.answer });
       this.post('assistantDone', {});
     }
 
-    this.history.push({ role: 'user', content: message });
-    if (full) {
-      // Repetition guard: 1.5B models sometimes anchor on the previous turn.
-      const previousAssistant = [...this.history].reverse().find((m) => m.role === 'assistant');
-      if (previousAssistant && full.trim() === previousAssistant.content.trim()) {
-        this.post('notice', {
-          message: 'The model repeated its previous answer. Use Clear Chat or rephrase with more detail.',
-        });
+    // Handle plan mode: agent returned steps
+    if (actions.includes('plan') || (steps && steps.length > 0)) {
+      if (steps && steps.length > 0) {
+        this.currentPlan = {
+          planId: 'agent-' + Date.now(),
+          steps: steps.map((s: any, i: number) => ({
+            title: s.title || s.action || `Step ${i + 1}`,
+            action: s.action || 'edit',
+            done: false
+          }))
+        };
+        this.planMode = true;
+        this.post('planMode', {});
+        this.post('plan', this.currentPlan);
       }
-      // Never store our own [p=...] marker: it is a verdict about the turn,
-      // not evidence, and the server strips it anyway before the next call.
-      const stored = full.replace(/^\[p=[\d.]+\]\s*/, '');
-      this.history.push({ role: 'assistant', content: stored || full });
+      return;
     }
-    this.history = this.history.slice(-12);
-    this.streaming = false;
+
+    // Handle multi-file patch action
+    if (actions.includes('apply_multi') && multiPatches && multiPatches.length > 0) {
+      this.pendingMultiPatch = {
+        workspace: rec.workspace || currentWorkspace(),
+        patches: multiPatches,
+        creates,
+        message: this.lastMessage || ''
+      };
+      this.post('pendingMultiPatch', { count: multiPatches.length });
+      return;
+    }
+
+    // Handle single-file patch action
+    if (actions.includes('apply') && patches.length > 0) {
+      this.pendingPatch = {
+        workspace: rec.workspace || currentWorkspace(),
+        patch: patches[0]
+      };
+      this.post('pendingPatch', { path: patches[0].path });
+      return;
+    }
+
+    // Handle view/diff action (show patches)
+    if (actions.includes('view') || actions.includes('diff')) {
+      if (patches.length > 0) {
+        this.post('viewPatches', { patches });
+        return;
+      }
+    }
+
+    // Handle review action
+    if (actions.includes('review')) {
+      await this.reviewChanges();
+      return;
+    }
+
+    // Handle test action
+    if (actions.includes('test')) {
+      try {
+        const result = await this.api.runTests(rec.workspace || currentWorkspace());
+        if (result.ok) {
+          this.post('testResult', { output: result.output });
+        }
+      } catch (e) {
+        // Fall through to normal response handling
+      }
+    }
+
+    // Default: just show the response
+    this.post('assistantDone', {});
   }
+
   /** Store a pending patch produced by a code action and surface it in the sidebar. */
   offerPatch(workspace: string, patches: FilePatch[]): void {
     if (patches.length > 0) {
@@ -418,8 +436,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   /** Clear history and reset the webview DOM (title-bar broom icon). */
   clearConversation(): void {
     this.history = [];
+    this.planMode = false;
     this.post('cleared', {});
   }
+
 
   private async confirmApply(autoConfirmed = false): Promise<void> {
     const pending = this.pendingPatch;

@@ -303,4 +303,31 @@ export class ForgeApi {
   ask(message: string, workspace?: string): Promise<{ ok: boolean; answer?: string; error?: string }> {
     return this.client.json('/v1/ask', { message, workspace }, undefined, undefined);
   }
+
+  /**
+   * Run an agent (context-aware) - each function is its own agent.
+   * The agent returns actions that drive UI behavior (view, diff, apply, etc.)
+   */
+  runAgent(message: string, workspace?: string, file?: string, selection?: SelectionInfo, agent?: string):
+    Promise<{ ok: boolean; error?: string; text?: string; answer?: string; actions?: string[];
+             patches?: FilePatch[]; multi_patches?: FilePatch[]; creates?: Record<string, string>;
+             steps?: any[]; probability?: number; agent?: string; kind?: string;
+             confidence?: AnswerConfidenceReceipt; intent?: { code_change: boolean; probability: number };
+             review?: any; verification?: any; meta?: Record<string, unknown> }> {
+    return this.client.json('/v1/agent/run', {
+      message, workspace, file,
+      selection: selection ? { start: selection.start, end: selection.end } : undefined,
+      agent: agent || 'forge'
+    });
+  }
+
+  /** List all available agents */
+  listAgents(): Promise<{ ok: boolean; agents?: Array<{ name: string; description: string; tools: string[] }> }> {
+    return this.client.json('/v1/agent/agents');
+  }
+
+  /** Run workspace tests */
+  runTests(workspace: string): Promise<{ ok: boolean; error?: string; output?: string; exit?: number }> {
+    return this.client.json('/v1/tests', { workspace });
+  }
 }

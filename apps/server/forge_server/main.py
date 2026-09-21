@@ -63,9 +63,10 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.include_router(completion_router)
     app.include_router(patches_router)
 
-    # Retrieval, code-actions, git and plan/act live in their own modules.
+    # Retrieval, code-actions, git, agents and plan/act live in own modules.
     try:
         from forge_server.actions import router as actions_router
+        from forge_server.agent import router as agent_router
         from forge_server.decide import router as decide_router
         from forge_server.git import router as git_router
         from forge_server.plans import router as plans_router
@@ -76,6 +77,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         app.include_router(decide_router)
         app.include_router(git_router)
         app.include_router(plans_router)
+        app.include_router(agent_router)
     except Exception:  # pragma: no cover - never crash core API on import issue
         log.exception("Failed to register optional routers")
 

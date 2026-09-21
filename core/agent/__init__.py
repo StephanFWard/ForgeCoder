@@ -1,11 +1,12 @@
-"""Agent layer: task frames, scope contracts, rule checks, and prompt assembly.
+"""Agent layer: context-aware agents (Jev + per-function agents).
 
-The workbench disciplines that make a small local model's coding work safe to
-review: what the task actually is (frame), where the change may land (scope),
-which rules the reply is scored against (rules), and how the prompt is layered
-so all of it fits in a 4K window (prompt).
+Each Forge capability is its own agent sharing one AgentContext, so the
+view/edit/apply branching that used to live in the VS Code sidebar now
+lives in the agent return value (Recommendation.actions).
 """
-
+from core.agent.base import FunctionAgent
+from core.agent.context import AgentContext, Recommendation
+from core.agent.forge import ForgeAgent, DEFAULT
 from core.agent.frame import TaskFrame, build_frame, render_frame
 from core.agent.prompt import compose_user_turn, render_task_frame, system_prompt
 from core.agent.rules import (
@@ -29,13 +30,20 @@ from core.agent.scope import (
     build_contract,
     matches_any,
 )
+from core.agent.tools import ForgeTool, get_tool, list_tools
 
 __all__ = [
+    "AgentContext",
     "BEHAVIOR_RULES",
+    "DEFAULT",
     "DEFAULT_FORBIDDEN",
     "DEFAULT_RULES",
+    "ForgeAgent",
+    "ForgeTool",
+    "FunctionAgent",
     "NO_ACCEPTANCE",
     "RULES_PATH",
+    "Recommendation",
     "Rule",
     "RuleContext",
     "RuleFinding",
@@ -46,6 +54,8 @@ __all__ = [
     "build_contract",
     "build_frame",
     "compose_user_turn",
+    "get_tool",
+    "list_tools",
     "load_rules",
     "matches_any",
     "parse_rules",
@@ -55,3 +65,4 @@ __all__ = [
     "run_rules",
     "system_prompt",
 ]
+

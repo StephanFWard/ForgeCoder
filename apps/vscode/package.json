@@ -145,17 +145,53 @@
     },
     "menus": {
       "view/title": [
-        { "command": "forgecoder.reviewChanges", "group": "navigation@1", "when": "view == forgecoder.sidebar" },
-        { "command": "forgecoder.commitWithForge", "group": "navigation@2", "when": "view == forgecoder.sidebar" },
-        { "command": "forgecoder.pushWithForge", "group": "navigation@3", "when": "view == forgecoder.sidebar" },
-        { "command": "forgecoder.planMode", "group": "navigation@4", "when": "view == forgecoder.sidebar" },
-        { "command": "forgecoder.clearChat", "group": "navigation@5", "when": "view == forgecoder.sidebar" }
+        {
+          "command": "forgecoder.reviewChanges",
+          "group": "navigation@1",
+          "when": "view == forgecoder.sidebar"
+        },
+        {
+          "command": "forgecoder.commitWithForge",
+          "group": "navigation@2",
+          "when": "view == forgecoder.sidebar"
+        },
+        {
+          "command": "forgecoder.pushWithForge",
+          "group": "navigation@3",
+          "when": "view == forgecoder.sidebar"
+        },
+        {
+          "command": "forgecoder.planMode",
+          "group": "navigation@4",
+          "when": "view == forgecoder.sidebar"
+        },
+        {
+          "command": "forgecoder.clearChat",
+          "group": "navigation@5",
+          "when": "view == forgecoder.sidebar"
+        }
       ],
       "editor/context": [
-        { "command": "forgecoder.explain", "group": "forgecoder@1", "when": "editorHasSelection" },
-        { "command": "forgecoder.fix", "group": "forgecoder@2", "when": "editorHasSelection" },
-        { "command": "forgecoder.refactor", "group": "forgecoder@3", "when": "editorHasSelection" },
-        { "command": "forgecoder.generateTests", "group": "forgecoder@4", "when": "editorHasSelection" }
+        {
+          "command": "forgecoder.explain",
+          "group": "forgecoder@1",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "forgecoder.fix",
+          "group": "forgecoder@2",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "forgecoder.refactor",
+          "group": "forgecoder@3",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "forgecoder.generateTests",
+          "group": "forgecoder@4",
+          "when": "editorHasSelection"
+        }
       ]
     },
     "configuration": {
@@ -221,5 +257,8 @@
     "glob": "^10.4.1",
     "mocha": "^10.4.0",
     "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "@langchain/core": "^0.3.0"
   }
 }
